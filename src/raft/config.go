@@ -446,6 +446,9 @@ func (cfg *config) checkOneLeader() int {
 				lastTermWithLeader = term
 			}
 		}
+		//for term, leaders := range leaders {
+		//	log.Printf("Term %d has leader(s): %v", term, leaders)
+		//}
 
 		if len(leaders) != 0 {
 			return leaders[lastTermWithLeader][0]

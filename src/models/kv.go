@@ -63,7 +63,7 @@ var KvModel = porcupine.Model{
 			return fmt.Sprintf("get('%s') -> '%s'", inp.Key, out.Value)
 		case 1:
 			return fmt.Sprintf("put('%s', '%s')", inp.Key, inp.Value)
-		case 2:
+		case 3:
 			return fmt.Sprintf("append('%s', '%s')", inp.Key, inp.Value)
 		default:
 			return "<invalid>"

@@ -17,13 +17,14 @@ import "fmt"
 import "log"
 
 func main() {
+	log.Printf("start")
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "Usage: mrworker xxx.so\n")
 		os.Exit(1)
 	}
 
 	mapf, reducef := loadPlugin(os.Args[1])
-
+	log.Printf("plugin loaded")
 	mr.Worker(mapf, reducef)
 }
 

@@ -8,7 +8,9 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -58,7 +60,7 @@ func TestReElection3A(t *testing.T) {
 	cfg.begin("Test (3A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
-
+	//log.Printf("Disconnect the leader in the first time: %d", leader1)
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
@@ -66,12 +68,15 @@ func TestReElection3A(t *testing.T) {
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
+	//log.Printf("Connect the leader in the first time: %d", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
+	//log.Printf("Disconnect the leader in the first time: %d", leader2)
 	cfg.disconnect(leader2)
+	//log.Printf("Disconnect the leader in the first time: %d", (leader2+1)%servers)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
