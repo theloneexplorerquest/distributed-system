@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"fmt"
+	"log"
 	"math/rand"
 	_ "net/http/pprof"
 	"sync"
@@ -99,6 +101,7 @@ type Raft struct {
 	electionTimeOut time.Duration
 	nextIndex       []int
 	matchIndex      []int
+	applyCh         chan ApplyMsg
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -200,29 +203,46 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
+	//log.Printf("term%d %d", rf.logs[args.PrevLogIndex].Term, args.PrevLogTerm)
 	if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		//log.Printf("unsucceed")
 		reply.Success = false
 		return
 	}
 	if len(args.Entries) > 0 && len(rf.logs) > args.PrevLogIndex {
+		//log.Printf("maybe succeed")
 		index := 0
 		if len(rf.logs) > args.PrevLogIndex+len(args.Entries)+1 {
-			index = args.PrevLogIndex + len(args.Entries)
+			index = args.PrevLogIndex + len(args.Entries) - 1
 		} else {
+			//rf.printLogs(rf.logs)
 			index = len(rf.logs) - 1
 		}
 		//log.Printf("current PrevLogIndex %d and Index %d", args.PrevLogIndex, index)
 		if rf.logs[index].Term != args.Entries[index-args.PrevLogIndex].Term {
 			//log.Printf("current PrevLogIndex %d", args.PrevLogIndex)
-			rf.logs = rf.logs[:args.PrevLogIndex]
+			rf.logs = rf.logs[:args.PrevLogIndex+1]
 		}
 	}
 	if args.PrevLogIndex+1+len(args.Entries) > len(rf.logs) {
-		for i := len(rf.logs) - args.PrevLogTerm - 1; i < len(args.Entries); i++ {
+		//log.Printf("follower's log before change %d %d", args.PrevLogIndex, len(rf.logs))
+		for i := len(rf.logs) - args.PrevLogIndex - 1; i < len(args.Entries); i++ {
 			rf.logs = append(rf.logs, args.Entries[i])
 		}
+		//log.Printf("follower's log after change %d", args.PrevLogIndex)
+		//rf.printLogs(rf.logs)
 	}
+	//log.Printf("update follower %d 's commit Index %d to leader's commit Index %d", rf.me, rf.commitIndex, args.LeaderCommit)
 	if args.LeaderCommit > rf.commitIndex {
+		//log.Printf("update follower %d 's commit Index to leader's commit Index %d", rf.me, args.LeaderCommit)
+		//rf.replicateLog()
+		for i := rf.commitIndex + 1; i <= args.LeaderCommit; i++ {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs[i].Command,
+				CommandIndex: i,
+			}
+		}
 		if args.LeaderCommit > len(rf.logs)-1 {
 			rf.commitIndex = len(rf.logs) - 1
 		} else {
@@ -302,6 +322,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+func (rf *Raft) printLogs(logs []Entry) {
+	logStr := ""
+	for i := 0; i < len(logs); i++ {
+		logStr += fmt.Sprintf("term %d command %v ", logs[i].Term, logs[i].Command)
+	}
+	log.Printf(logStr)
+}
+
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -319,47 +347,131 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	//term := -1
 	//isLeader := true
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if rf.currentRole != Leader {
+		rf.mu.Unlock()
 		return 0, 0, false
 	} else {
+		//log.Printf("current leader is %d\n", rf.me)
+		currentTerm := rf.currentTerm
+		leaderCommit := rf.commitIndex
 		entry := Entry{
 			Term:    rf.currentTerm,
 			Command: command,
 		}
-		appendEntriesReply := AppendEntriesReply{}
 		rf.logs = append(rf.logs, entry)
-		rf.nextIndex[rf.me] = len(rf.logs) - 1
+		rf.nextIndex[rf.me] = len(rf.logs)
+
+		//rf.printLogs(rf.logs)
+
+		rf.mu.Unlock()
 		for idx, peer := range rf.peers {
-			if idx != rf.me && len(rf.logs)-1 > rf.nextIndex[idx] {
-				prefixIndex := rf.nextIndex[idx]
-				suffix := rf.logs[prefixIndex:]
-				prefixTerm := 0
-				if prefixIndex > 0 {
-					prefixTerm = rf.logs[prefixIndex].Term
+			if idx != rf.me && len(rf.logs)-1 >= rf.nextIndex[idx] {
+				appendEntriesReply := AppendEntriesReply{}
+				rf.mu.Lock()
+				//log.Printf("sending logs to %d %d", idx, rf.nextIndex[idx])
+
+				prevLogIndex := rf.nextIndex[idx] - 1
+				suffix := rf.logs[rf.nextIndex[idx]:]
+				//rf.printLogs(suffix)
+
+				prevLogTerm := 0
+				if prevLogIndex > 0 {
+					prevLogTerm = rf.logs[prevLogIndex].Term
 				}
+				rf.mu.Unlock()
 				appendEntriesArgs := AppendEntriesArgs{
-					Term:         rf.currentTerm,
+					Term:         currentTerm,
 					LeaderId:     rf.me,
-					PrevLogIndex: prefixIndex,
-					PrevLogTerm:  prefixTerm,
+					PrevLogIndex: prevLogIndex,
+					PrevLogTerm:  prevLogTerm,
 					Entries:      suffix,
-					LeaderCommit: rf.commitIndex,
+					LeaderCommit: leaderCommit,
 				}
 				if peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply) {
 					if appendEntriesReply.Term == rf.currentTerm && rf.currentRole == Leader {
-						if appendEntriesReply.Success {
+						if appendEntriesReply.Success && appendEntriesArgs.PrevLogIndex+len(appendEntriesArgs.Entries) >= rf.nextIndex[idx] {
+							rf.mu.Lock()
+							rf.nextIndex[idx] = appendEntriesArgs.PrevLogIndex + len(appendEntriesArgs.Entries)
+							rf.matchIndex[idx] = appendEntriesArgs.PrevLogIndex + len(appendEntriesArgs.Entries)
+							rf.mu.Unlock()
+							//log.Printf("got reply should commit now")
+							rf.replicateLog()
+						} else if rf.nextIndex[idx] >= 0 {
+							rf.mu.Lock()
+							rf.nextIndex[idx] -= 1
+							rf.mu.Unlock()
 						}
+					} else if appendEntriesArgs.Term > rf.currentTerm {
+						rf.currentTerm = appendEntriesArgs.Term
+						rf.currentRole = Follower
+						rf.votedFor = -1
 					}
 				}
 			}
 		}
 		return rf.commitIndex, rf.currentTerm, true
 	}
+}
 
-	// Your code here (3B).
+func (rf *Raft) replicateLog() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	minAcks := (len(rf.logs) + 1) / 2
+	ready := make([]int, 0)
+	for i := 1; i < len(rf.logs); i++ {
+		if rf.acks(i) >= minAcks {
+			ready = append(ready, i)
+			//log.Printf("ready to be commited %d", i)
+		}
+	}
+	//log.Printf("server %d commitIndex %d currentTerm %d log term %d", rf.me, rf.commitIndex, rf.currentTerm, rf.logs[ready[len(ready)-1]].Term)
+	if len(ready) > 0 && ready[len(ready)-1] > rf.commitIndex && rf.logs[ready[len(ready)-1]].Term == rf.currentTerm {
+		for i := rf.commitIndex + 1; i <= ready[len(ready)-1]; i++ {
+			//log.Printf("server %d apply change", rf.me)
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs[i].Command,
+				CommandIndex: i,
+			}
+		}
+		//log.Printf("commitIndex of server %d is updated to %d", rf.me, rf.commitIndex)
+		rf.commitIndex = ready[len(ready)-1]
+	}
+}
 
-	//return index, term, isLeader
+//func (rf *Raft) replicateLog1() {
+//	minAcks := (len(rf.logs) + 1) / 2
+//	ready := make([]int, 0)
+//	for i := 0; i < len(rf.logs); i++ {
+//		if rf.acks(i) >= minAcks {
+//			ready = append(ready, i)
+//			log.Printf("ready to be commited %d", i)
+//		}
+//	}
+//	log.Printf("follower should update as well, len of ready %d, nums of ready  %d, currentIndex %d", len(ready), ready[len(ready)-1], rf.commitIndex)
+//	//log.Printf("server %d commitIndex %d currentTerm %d log term %d", rf.me, rf.commitIndex, rf.currentTerm, rf.logs[ready[len(ready)-1]].Term)
+//	if len(ready) > 0 && ready[len(ready)-1] > rf.commitIndex && rf.logs[ready[len(ready)-1]].Term == rf.currentTerm {
+//		for i := rf.commitIndex + 1; i <= ready[len(ready)-1]; i++ {
+//			log.Printf("server %d apply change", rf.me)
+//			rf.applyCh <- ApplyMsg{
+//				CommandValid: true,
+//				Command:      rf.logs[i].Command,
+//				CommandIndex: i,
+//			}
+//		}
+//		log.Printf("commitIndex of server %d is updated to %d", rf.me, rf.commitIndex)
+//		rf.commitIndex = ready[len(ready)-1]
+//	}
+//}
+
+func (rf *Raft) acks(length int) int {
+	totalAcked := 0
+	for idx, _ := range rf.peers {
+		if rf.matchIndex[idx] >= length {
+			totalAcked++
+		}
+	}
+	return totalAcked
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -517,6 +629,7 @@ func (rf *Raft) sendHeartbeats() {
 		}
 		currentTerm := rf.currentTerm
 		leaderId := rf.me
+		commitIndex := rf.commitIndex
 		//log.Print("leaderId: ", leaderId)
 		rf.mu.Unlock()
 
@@ -526,13 +639,24 @@ func (rf *Raft) sendHeartbeats() {
 				wg.Add(1)
 				go func(peer *labrpc.ClientEnd, idx int) {
 					defer wg.Done()
+					rf.mu.Lock()
+					prevLogIndex := rf.nextIndex[idx] - 1
+
+					prevLogTerm := 0
+					if prevLogIndex > 0 {
+						prevLogTerm = rf.logs[prevLogIndex].Term
+					}
 					args := AppendEntriesArgs{
-						Term:     currentTerm,
-						LeaderId: leaderId,
+						Term:         currentTerm,
+						LeaderId:     leaderId,
+						PrevLogIndex: prevLogIndex,
+						PrevLogTerm:  prevLogTerm,
+						LeaderCommit: commitIndex,
+						Entries:      make([]Entry, 0),
 					}
 					reply := AppendEntriesReply{}
-
-					//log.Printf("[%d] Sending heartbeat to %d", rf.me, idx)
+					rf.mu.Unlock()
+					//log.Printf("[%d] Sending heartbeat to %d current leader index %d", rf.me, idx, commitIndex)
 					if peer.Call("Raft.AppendEntries", &args, &reply) {
 						rf.mu.Lock()
 						defer rf.mu.Unlock()
@@ -580,11 +704,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
+	rf.applyCh = applyCh
+	rf.logs = make([]Entry, 1)
+	//log.Printf(" initailised")
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = len(rf.logs) // Replace initialValue with the desired default value
 	}
 	rf.matchIndex = make([]int, len(peers))
-	rf.logs = make([]Entry, 1)
 	// Your initialization code here (3A, 3B, 3C).
 
 	// initialize from state persisted before a crash

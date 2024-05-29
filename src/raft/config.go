@@ -149,6 +149,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 		}
 	}
 	_, prevok := cfg.logs[i][m.CommandIndex-1]
+	//log.Printf("assign v to logs  %d %d %s", i, m.CommandIndex, v)
 	cfg.logs[i][m.CommandIndex] = v
 	if m.CommandIndex > cfg.maxIndex {
 		cfg.maxIndex = m.CommandIndex
@@ -160,6 +161,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 // contents
 func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 	for m := range applyCh {
+		//log.Printf("some thing in applyCh at least %d %s %t", m.CommandIndex, m.Command, m.CommandValid)
 		if m.CommandValid == false {
 			// ignore other types of ApplyMsg
 		} else {
@@ -218,6 +220,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 
 	for m := range applyCh {
+		//log.Printf("some thing in applyCh at least")
 		err_msg := ""
 		if m.SnapshotValid {
 			cfg.mu.Lock()
@@ -498,6 +501,8 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 
 		cfg.mu.Lock()
 		cmd1, ok := cfg.logs[i][index]
+		//log.Printf("server %d cmd %d: ok %v %d %s \n", i, index, ok, len(cfg.logs[i]), cmd1)
+		//fmt.Println("String:", cmd1)
 		cfg.mu.Unlock()
 
 		if ok {
@@ -572,6 +577,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
+					//log.Printf("at index %d term %d somebody think he is the leader :%d", index1, term, starts)
 					index = index1
 					break
 				}
@@ -584,7 +590,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
-				log.Printf("%d server think command %d is commited", nd, cmd1)
+				//log.Printf("%d server think command %d is commited, the server is %d", nd, cmd1, starts)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
