@@ -198,6 +198,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	//if len(args.Entries) > 0 {
+	//	rf.printLogs(args.Entries)
+	//}
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -215,6 +218,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if len(rf.logs) > args.PrevLogIndex+len(args.Entries)+1 {
 			index = args.PrevLogIndex + len(args.Entries) - 1
 		} else {
+			//log.Printf("log 1")
 			//rf.printLogs(rf.logs)
 			index = len(rf.logs) - 1
 		}
@@ -222,6 +226,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if rf.logs[index].Term != args.Entries[index-args.PrevLogIndex].Term {
 			//log.Printf("current PrevLogIndex %d", args.PrevLogIndex)
 			rf.logs = rf.logs[:args.PrevLogIndex+1]
+			//log.Printf("log 2")
+			//rf.printLogs(rf.logs)
 		}
 	}
 	if args.PrevLogIndex+1+len(args.Entries) > len(rf.logs) {
@@ -229,14 +235,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		for i := len(rf.logs) - args.PrevLogIndex - 1; i < len(args.Entries); i++ {
 			rf.logs = append(rf.logs, args.Entries[i])
 		}
+		//log.Printf("log 3")
 		//log.Printf("follower's log after change %d", args.PrevLogIndex)
 		//rf.printLogs(rf.logs)
 	}
-	//log.Printf("update follower %d 's commit Index %d to leader's commit Index %d", rf.me, rf.commitIndex, args.LeaderCommit)
+	//log.Printf("follower %d 's commit Index %d to leader's commit Index %d", rf.me, rf.commitIndex, args.LeaderCommit)
 	if args.LeaderCommit > rf.commitIndex {
 		//log.Printf("update follower %d 's commit Index to leader's commit Index %d", rf.me, args.LeaderCommit)
 		//rf.replicateLog()
+
+		//log.Printf("log 4")
+		//log.Printf("follower's log after change %d", args.PrevLogIndex)
+		//rf.printLogs(rf.logs)
 		for i := rf.commitIndex + 1; i <= args.LeaderCommit; i++ {
+			//log.Printf("non-leader %d apply change %s index %d", rf.me, rf.logs[i].Command, i)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				Command:      rf.logs[i].Command,
@@ -324,8 +336,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) printLogs(logs []Entry) {
 	logStr := ""
+	logStr += fmt.Sprintf("server: %d,", rf.me)
 	for i := 0; i < len(logs); i++ {
-		logStr += fmt.Sprintf("term %d command %v ", logs[i].Term, logs[i].Command)
+		logStr += fmt.Sprintf("term %d command %v, ", logs[i].Term, logs[i].Command)
 	}
 	log.Printf(logStr)
 }
@@ -351,118 +364,118 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.mu.Unlock()
 		return 0, 0, false
 	} else {
-		//log.Printf("current leader is %d\n", rf.me)
 		currentTerm := rf.currentTerm
 		leaderCommit := rf.commitIndex
+		//log.Printf("current leader is %d with index %d\n", rf.me, leaderCommit)
 		entry := Entry{
 			Term:    rf.currentTerm,
 			Command: command,
 		}
 		rf.logs = append(rf.logs, entry)
+		logIndex := len(rf.logs) - 1
 		rf.nextIndex[rf.me] = len(rf.logs)
-
-		//rf.printLogs(rf.logs)
-
 		rf.mu.Unlock()
-		for idx, peer := range rf.peers {
-			if idx != rf.me && len(rf.logs)-1 >= rf.nextIndex[idx] {
-				appendEntriesReply := AppendEntriesReply{}
-				rf.mu.Lock()
-				//log.Printf("sending logs to %d %d", idx, rf.nextIndex[idx])
+		rf.broadcastAppendEntries(currentTerm, leaderCommit)
+		return logIndex, currentTerm, true
+	}
+}
 
-				prevLogIndex := rf.nextIndex[idx] - 1
-				suffix := rf.logs[rf.nextIndex[idx]:]
-				//rf.printLogs(suffix)
-
-				prevLogTerm := 0
-				if prevLogIndex > 0 {
-					prevLogTerm = rf.logs[prevLogIndex].Term
-				}
-				rf.mu.Unlock()
-				appendEntriesArgs := AppendEntriesArgs{
-					Term:         currentTerm,
-					LeaderId:     rf.me,
-					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  prevLogTerm,
-					Entries:      suffix,
-					LeaderCommit: leaderCommit,
-				}
-				if peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply) {
-					if appendEntriesReply.Term == rf.currentTerm && rf.currentRole == Leader {
-						if appendEntriesReply.Success && appendEntriesArgs.PrevLogIndex+len(appendEntriesArgs.Entries) >= rf.nextIndex[idx] {
-							rf.mu.Lock()
-							rf.nextIndex[idx] = appendEntriesArgs.PrevLogIndex + len(appendEntriesArgs.Entries)
-							rf.matchIndex[idx] = appendEntriesArgs.PrevLogIndex + len(appendEntriesArgs.Entries)
-							rf.mu.Unlock()
-							//log.Printf("got reply should commit now")
-							rf.replicateLog()
-						} else if rf.nextIndex[idx] >= 0 {
-							rf.mu.Lock()
-							rf.nextIndex[idx] -= 1
-							rf.mu.Unlock()
-						}
-					} else if appendEntriesArgs.Term > rf.currentTerm {
-						rf.currentTerm = appendEntriesArgs.Term
-						rf.currentRole = Follower
-						rf.votedFor = -1
-					}
-				}
-			}
+func (rf *Raft) broadcastAppendEntries(currentTerm int, leaderCommit int) {
+	var wg sync.WaitGroup
+	for idx, peer := range rf.peers {
+		if idx != rf.me && len(rf.logs)-1 >= rf.nextIndex[idx] {
+			wg.Add(1)
+			rf.sendAppendEntries(peer, idx, currentTerm, leaderCommit, &wg)
 		}
-		return rf.commitIndex, rf.currentTerm, true
+	}
+	wg.Wait()
+}
+
+func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, leaderCommit int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	appendEntriesReply := AppendEntriesReply{}
+	rf.mu.Lock()
+	//log.Printf("sending logs to %d %d", idx, rf.nextIndex[idx])
+
+	prevLogIndex := rf.nextIndex[idx] - 1
+	suffix := rf.logs[rf.nextIndex[idx]:]
+	//log.Printf("next index for server %d %d", idx, rf.nextIndex[idx])
+	//rf.printLogs(suffix)
+
+	prevLogTerm := 0
+	if prevLogIndex > 0 {
+		prevLogTerm = rf.logs[prevLogIndex].Term
+	}
+	rf.mu.Unlock()
+	appendEntriesArgs := AppendEntriesArgs{
+		Term:         currentTerm,
+		LeaderId:     rf.me,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      suffix,
+		LeaderCommit: leaderCommit,
+	}
+	for {
+		response := peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply)
+		if response {
+			rf.handleAppendEntriesReply(idx, &appendEntriesArgs, &appendEntriesReply)
+			return
+		} else {
+			log.Printf("failed to call AppendEntries to server %d", idx)
+			time.Sleep(heartbeatCheckInterval)
+		}
+	}
+}
+
+func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	if reply.Term == rf.currentTerm && rf.currentRole == Leader {
+		if reply.Success && args.PrevLogIndex+len(args.Entries)+1 >= rf.nextIndex[idx] {
+			rf.mu.Lock()
+			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
+			rf.matchIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
+			//log.Printf("got reply should commit now")
+			rf.replicateLog()
+			//log.Printf("updated commitIndex for leader %d", rf.commitIndex)
+			rf.mu.Unlock()
+			//return
+		} else if rf.nextIndex[idx] >= 0 {
+			rf.mu.Lock()
+			rf.nextIndex[idx] -= 1
+			rf.mu.Unlock()
+		}
+	} else if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.currentRole = Follower
+		rf.votedFor = -1
 	}
 }
 
 func (rf *Raft) replicateLog() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	minAcks := (len(rf.logs) + 1) / 2
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
+	minAcks := (len(rf.peers) + 1) / 2
 	ready := make([]int, 0)
+	//log.Printf("start replicating logs")
 	for i := 1; i < len(rf.logs); i++ {
 		if rf.acks(i) >= minAcks {
 			ready = append(ready, i)
-			//log.Printf("ready to be commited %d", i)
+			//log.Printf("ready to be commited at index %d", i)
 		}
 	}
 	//log.Printf("server %d commitIndex %d currentTerm %d log term %d", rf.me, rf.commitIndex, rf.currentTerm, rf.logs[ready[len(ready)-1]].Term)
 	if len(ready) > 0 && ready[len(ready)-1] > rf.commitIndex && rf.logs[ready[len(ready)-1]].Term == rf.currentTerm {
 		for i := rf.commitIndex + 1; i <= ready[len(ready)-1]; i++ {
-			//log.Printf("server %d apply change", rf.me)
+			//log.Printf("leader %d apply change %s index %d", rf.me, rf.logs[i].Command, i)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				Command:      rf.logs[i].Command,
 				CommandIndex: i,
 			}
 		}
-		//log.Printf("commitIndex of server %d is updated to %d", rf.me, rf.commitIndex)
 		rf.commitIndex = ready[len(ready)-1]
+		//log.Printf("commitIndex of server %d is updated to %d", rf.me, rf.commitIndex)
 	}
 }
-
-//func (rf *Raft) replicateLog1() {
-//	minAcks := (len(rf.logs) + 1) / 2
-//	ready := make([]int, 0)
-//	for i := 0; i < len(rf.logs); i++ {
-//		if rf.acks(i) >= minAcks {
-//			ready = append(ready, i)
-//			log.Printf("ready to be commited %d", i)
-//		}
-//	}
-//	log.Printf("follower should update as well, len of ready %d, nums of ready  %d, currentIndex %d", len(ready), ready[len(ready)-1], rf.commitIndex)
-//	//log.Printf("server %d commitIndex %d currentTerm %d log term %d", rf.me, rf.commitIndex, rf.currentTerm, rf.logs[ready[len(ready)-1]].Term)
-//	if len(ready) > 0 && ready[len(ready)-1] > rf.commitIndex && rf.logs[ready[len(ready)-1]].Term == rf.currentTerm {
-//		for i := rf.commitIndex + 1; i <= ready[len(ready)-1]; i++ {
-//			log.Printf("server %d apply change", rf.me)
-//			rf.applyCh <- ApplyMsg{
-//				CommandValid: true,
-//				Command:      rf.logs[i].Command,
-//				CommandIndex: i,
-//			}
-//		}
-//		log.Printf("commitIndex of server %d is updated to %d", rf.me, rf.commitIndex)
-//		rf.commitIndex = ready[len(ready)-1]
-//	}
-//}
 
 func (rf *Raft) acks(length int) int {
 	totalAcked := 0
@@ -630,7 +643,7 @@ func (rf *Raft) sendHeartbeats() {
 		currentTerm := rf.currentTerm
 		leaderId := rf.me
 		commitIndex := rf.commitIndex
-		//log.Print("leaderId: ", leaderId)
+		//log.Printf("heartbeat leaderId: %d at index %d", leaderId, commitIndex)
 		rf.mu.Unlock()
 
 		var wg sync.WaitGroup

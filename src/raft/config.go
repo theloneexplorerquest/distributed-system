@@ -8,8 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "6.5840/labgob"
-import "6.5840/labrpc"
+import (
+	"6.5840/labgob"
+	"6.5840/labrpc"
+)
 import "bytes"
 import "log"
 import "sync"
@@ -577,7 +579,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
-					//log.Printf("at index %d term %d somebody think he is the leader :%d", index1, term, starts)
+					//log.Printf("at index %d somebody think he is the leader :%d", index1, starts)
 					index = index1
 					break
 				}
@@ -590,7 +592,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
-				//log.Printf("%d server think command %d is commited, the server is %d", nd, cmd1, starts)
+				//log.Printf("%d server think command %d is commited (true command  %d ), the server is %d", nd, cmd1, cmd, starts)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
