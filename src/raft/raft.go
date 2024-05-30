@@ -374,8 +374,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.logs = append(rf.logs, entry)
 		logIndex := len(rf.logs) - 1
 		rf.nextIndex[rf.me] = len(rf.logs)
+		rf.matchIndex[rf.me] = len(rf.logs) - 1
 		rf.mu.Unlock()
-		rf.broadcastAppendEntries(currentTerm, leaderCommit)
+		go rf.broadcastAppendEntries(currentTerm, leaderCommit)
+		//log.Printf("return Start immediately")
 		return logIndex, currentTerm, true
 	}
 }
@@ -385,7 +387,7 @@ func (rf *Raft) broadcastAppendEntries(currentTerm int, leaderCommit int) {
 	for idx, peer := range rf.peers {
 		if idx != rf.me && len(rf.logs)-1 >= rf.nextIndex[idx] {
 			wg.Add(1)
-			rf.sendAppendEntries(peer, idx, currentTerm, leaderCommit, &wg)
+			go rf.sendAppendEntries(peer, idx, currentTerm, leaderCommit, &wg)
 		}
 	}
 	wg.Wait()
@@ -416,24 +418,27 @@ func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, lead
 		LeaderCommit: leaderCommit,
 	}
 	for {
+		//log.Printf("sending logs to %d %d", idx, rf.nextIndex[idx])
 		response := peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply)
 		if response {
+			//log.Printf("succeed to call AppendEntries to server %d", idx)
 			rf.handleAppendEntriesReply(idx, &appendEntriesArgs, &appendEntriesReply)
 			return
 		} else {
-			log.Printf("failed to call AppendEntries to server %d", idx)
+			//log.Printf("failed to call AppendEntries to server %d", idx)
 			time.Sleep(heartbeatCheckInterval)
 		}
 	}
 }
 
 func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	//log.Printf("start handleAppendEntriesReply")
 	if reply.Term == rf.currentTerm && rf.currentRole == Leader {
 		if reply.Success && args.PrevLogIndex+len(args.Entries)+1 >= rf.nextIndex[idx] {
 			rf.mu.Lock()
 			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
-			rf.matchIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
-			//log.Printf("got reply should commit now")
+			rf.matchIndex[idx] = args.PrevLogIndex + len(args.Entries)
+			//log.Printf("got reply should commit now, matchIndex of %d is %d\n", idx, rf.matchIndex[idx])
 			rf.replicateLog()
 			//log.Printf("updated commitIndex for leader %d", rf.commitIndex)
 			rf.mu.Unlock()
@@ -456,7 +461,8 @@ func (rf *Raft) replicateLog() {
 	minAcks := (len(rf.peers) + 1) / 2
 	ready := make([]int, 0)
 	//log.Printf("start replicating logs")
-	for i := 1; i < len(rf.logs); i++ {
+	//rf.printLogs(rf.logs)
+	for i := 0; i < len(rf.logs); i++ {
 		if rf.acks(i) >= minAcks {
 			ready = append(ready, i)
 			//log.Printf("ready to be commited at index %d", i)
@@ -480,7 +486,8 @@ func (rf *Raft) replicateLog() {
 func (rf *Raft) acks(length int) int {
 	totalAcked := 0
 	for idx, _ := range rf.peers {
-		if rf.matchIndex[idx] >= length {
+		//log.Printf("matchIndex of %d is %d\n", idx, rf.matchIndex[idx])
+		if rf.matchIndex[idx] >= length-1 {
 			totalAcked++
 		}
 	}

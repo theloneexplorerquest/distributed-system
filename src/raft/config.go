@@ -592,7 +592,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
-				//log.Printf("%d server think command %d is commited (true command  %d ), the server is %d", nd, cmd1, cmd, starts)
+				//log.Printf("at index %d,  %d server think command %d is commited (true command  %d ), the server is %d", index, nd, cmd1, cmd, starts)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {

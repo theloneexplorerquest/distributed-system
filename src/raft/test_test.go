@@ -9,6 +9,7 @@ package raft
 //
 
 import (
+	"log"
 	"testing"
 )
 import "fmt"
@@ -196,6 +197,7 @@ func TestFollowerFailure3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader1 := cfg.checkOneLeader()
+	log.Printf("disconnect follower %d from the network.", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// the leader and remaining follower should be
