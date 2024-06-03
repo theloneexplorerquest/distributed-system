@@ -163,7 +163,6 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 // contents
 func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 	for m := range applyCh {
-		//log.Printf("some thing in applyCh at least %d %s %t", m.CommandIndex, m.Command, m.CommandValid)
 		if m.CommandValid == false {
 			// ignore other types of ApplyMsg
 		} else {
@@ -567,6 +566,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	starts := 0
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
+		//log.Print("try again")
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -592,7 +592,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
-				log.Printf("at index %d,  %d server think command %d is commited (true command  %d ), the server is %d", index, nd, cmd1, cmd, starts)
+				//log.Printf("at index %d,  %d server think command %d is commited (true command  %d ), the server is %d", index, nd, cmd1, cmd, starts)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
@@ -606,6 +606,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {
+			//log.Printf("sleep a while")
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
