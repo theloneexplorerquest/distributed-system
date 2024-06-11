@@ -453,7 +453,7 @@ func (cfg *config) checkOneLeader() int {
 		//for term, leaders := range leaders {
 		//	log.Printf("Term %d has leader(s): %v", term, leaders)
 		//}
-		log.Printf("re-election is required")
+		//log.Printf("re-election is required")
 		if len(leaders) != 0 {
 			return leaders[lastTermWithLeader][0]
 		}

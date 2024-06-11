@@ -736,7 +736,9 @@ func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentT
 	}
 	entries := make([]Entry, 0)
 	if len(rf.logs)-1 >= rf.nextIndex[idx] {
-		entries = rf.logs[rf.nextIndex[idx]:]
+		slice := rf.logs[rf.nextIndex[idx]:]
+		entries = make([]Entry, len(slice))
+		copy(entries, slice)
 	}
 	args := AppendEntriesArgs{
 		Term:         currentTerm,

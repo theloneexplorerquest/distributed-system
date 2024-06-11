@@ -197,7 +197,7 @@ func TestFollowerFailure3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader1 := cfg.checkOneLeader()
-	log.Printf("disconnect follower %d from the network.", (leader1+1)%servers)
+	//log.Printf("disconnect follower %d from the network.", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -285,7 +285,7 @@ func TestFailAgree3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
-	log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
+	//log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -323,11 +323,11 @@ func TestFailNoAgree3B(t *testing.T) {
 	leader := cfg.checkOneLeader()
 	log.Printf("leader is %d from the network.", leader)
 	cfg.disconnect((leader + 1) % servers)
-	log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
+	//log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
 	cfg.disconnect((leader + 2) % servers)
-	log.Printf("disconnect follower %d from the network.", (leader+2)%servers)
+	//log.Printf("disconnect follower %d from the network.", (leader+2)%servers)
 	cfg.disconnect((leader + 3) % servers)
-	log.Printf("disconnect follower %d from the network.", (leader+3)%servers)
+	//log.Printf("disconnect follower %d from the network.", (leader+3)%servers)
 
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
