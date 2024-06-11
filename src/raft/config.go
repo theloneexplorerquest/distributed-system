@@ -453,7 +453,7 @@ func (cfg *config) checkOneLeader() int {
 		//for term, leaders := range leaders {
 		//	log.Printf("Term %d has leader(s): %v", term, leaders)
 		//}
-
+		log.Printf("re-election is required")
 		if len(leaders) != 0 {
 			return leaders[lastTermWithLeader][0]
 		}
@@ -579,7 +579,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
-					log.Printf("at index %d somebody think he is the leader :%d", index1, starts)
+					//log.Printf("at index %d somebody think he is the leader :%d", index1, starts)
 					index = index1
 					break
 				}
@@ -603,7 +603,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				time.Sleep(20 * time.Millisecond)
 			}
 			if retry == false {
-				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+				cfg.t.Fatalf("one(%v) failed to reach agreement as retry is false", cmd)
 			}
 		} else {
 			//log.Printf("sleep a while")
@@ -611,7 +611,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 	}
 	if cfg.checkFinished() == false {
-		cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+		cfg.t.Fatalf("one(%v) failed to reach agreement due to timeout", cmd)
 	}
 	return -1
 }
