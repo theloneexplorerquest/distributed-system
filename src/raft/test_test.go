@@ -8,10 +8,7 @@ package raft
 // test with the original before submitting.
 //
 
-import (
-	"log"
-	"testing"
-)
+import "testing"
 import "fmt"
 import "time"
 import "math/rand"
@@ -61,7 +58,7 @@ func TestReElection3A(t *testing.T) {
 	cfg.begin("Test (3A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
-	//log.Printf("Disconnect the leader in the first time: %d", leader1)
+
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
@@ -69,15 +66,12 @@ func TestReElection3A(t *testing.T) {
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
-	//log.Printf("Connect the leader in the first time: %d", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
-	//log.Printf("Disconnect the leader in the first time: %d", leader2)
 	cfg.disconnect(leader2)
-	//log.Printf("Disconnect the leader in the first time: %d", (leader2+1)%servers)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
@@ -197,7 +191,6 @@ func TestFollowerFailure3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader1 := cfg.checkOneLeader()
-	//log.Printf("disconnect follower %d from the network.", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -208,7 +201,6 @@ func TestFollowerFailure3B(t *testing.T) {
 
 	// disconnect the remaining follower
 	leader2 := cfg.checkOneLeader()
-	log.Printf("disconnect remaining follower %d, %d", (leader2+1)%servers, (leader2+2)%servers)
 	cfg.disconnect((leader2 + 1) % servers)
 	cfg.disconnect((leader2 + 2) % servers)
 
@@ -285,7 +277,6 @@ func TestFailAgree3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
-	//log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -297,15 +288,14 @@ func TestFailAgree3B(t *testing.T) {
 	cfg.one(105, servers-1, false)
 
 	// re-connect
-	log.Printf("re-connect follower %d from the network.", (leader+1)%servers)
 	cfg.connect((leader + 1) % servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
 	// on new commands.
 	cfg.one(106, servers, true)
-	//time.Sleep(RaftElectionTimeout)
-	//cfg.one(107, servers, true)
+	time.Sleep(RaftElectionTimeout)
+	cfg.one(107, servers, true)
 
 	cfg.end()
 }
@@ -321,13 +311,9 @@ func TestFailNoAgree3B(t *testing.T) {
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
-	log.Printf("leader is %d from the network.", leader)
 	cfg.disconnect((leader + 1) % servers)
-	//log.Printf("disconnect follower %d from the network.", (leader+1)%servers)
 	cfg.disconnect((leader + 2) % servers)
-	//log.Printf("disconnect follower %d from the network.", (leader+2)%servers)
 	cfg.disconnect((leader + 3) % servers)
-	//log.Printf("disconnect follower %d from the network.", (leader+3)%servers)
 
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
@@ -478,7 +464,7 @@ func TestRejoin3B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
-	log.Printf("disconnect first leader %d and make it trying to agree on some entries", leader1)
+
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
 	cfg.rafts[leader1].Start(103)
@@ -486,15 +472,13 @@ func TestRejoin3B(t *testing.T) {
 
 	// new leader commits, also for index=2
 	cfg.one(103, 2, true)
-	//
+
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
-	log.Printf("disconnect second leader: %d", leader2)
-	//
-	//// old leader connected again
+
+	// old leader connected again
 	cfg.connect(leader1)
-	log.Printf("old leader connected again: %d", leader1)
 
 	cfg.one(104, 2, true)
 

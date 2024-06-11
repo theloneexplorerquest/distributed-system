@@ -415,7 +415,10 @@ func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, lead
 	//log.Printf("sending logs to %d %d", idx, rf.nextIndex[idx])
 
 	prevLogIndex := rf.nextIndex[idx] - 1
-	suffix := rf.logs[rf.nextIndex[idx]:]
+	entries := make([]Entry, 0)
+	slice := rf.logs[rf.nextIndex[idx]:]
+	entries = make([]Entry, len(slice))
+	copy(entries, slice)
 	//log.Printf("sendAppendEntries prevLogIndex %d", prevLogIndex)
 	//rf.printLogs(rf.logs)
 	//rf.printLogs(suffix)
@@ -429,7 +432,7 @@ func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, lead
 		LeaderId:     rf.me,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
-		Entries:      suffix,
+		Entries:      entries,
 		LeaderCommit: leaderCommit,
 	}
 	for {

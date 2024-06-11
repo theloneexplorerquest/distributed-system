@@ -8,10 +8,8 @@ package raft
 // test with the original before submitting.
 //
 
-import (
-	"6.5840/labgob"
-	"6.5840/labrpc"
-)
+import "6.5840/labgob"
+import "6.5840/labrpc"
 import "bytes"
 import "log"
 import "sync"
@@ -144,14 +142,13 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 	v := m.Command
 	for j := 0; j < len(cfg.logs); j++ {
 		if old, oldok := cfg.logs[j][m.CommandIndex]; oldok && old != v {
-			log.Printf("server %v: log %v; server %v: log %v \n", i, cfg.logs[i], j, cfg.logs[j])
+			log.Printf("%v: log %v; server %v\n", i, cfg.logs[i], cfg.logs[j])
 			// some server has already committed a different value for this entry!
 			err_msg = fmt.Sprintf("commit index=%v server=%v %v != server=%v %v",
 				m.CommandIndex, i, m.Command, j, old)
 		}
 	}
 	_, prevok := cfg.logs[i][m.CommandIndex-1]
-	//log.Printf("assign v to logs  %d %d %s", i, m.CommandIndex, v)
 	cfg.logs[i][m.CommandIndex] = v
 	if m.CommandIndex > cfg.maxIndex {
 		cfg.maxIndex = m.CommandIndex
@@ -221,7 +218,6 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 
 	for m := range applyCh {
-		//log.Printf("some thing in applyCh at least")
 		err_msg := ""
 		if m.SnapshotValid {
 			cfg.mu.Lock()
@@ -450,10 +446,7 @@ func (cfg *config) checkOneLeader() int {
 				lastTermWithLeader = term
 			}
 		}
-		//for term, leaders := range leaders {
-		//	log.Printf("Term %d has leader(s): %v", term, leaders)
-		//}
-		//log.Printf("re-election is required")
+
 		if len(leaders) != 0 {
 			return leaders[lastTermWithLeader][0]
 		}
@@ -502,8 +495,6 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 
 		cfg.mu.Lock()
 		cmd1, ok := cfg.logs[i][index]
-		//log.Printf("server %d cmd %d: ok %v %d %s \n", i, index, ok, len(cfg.logs[i]), cmd1)
-		//fmt.Println("String:", cmd1)
 		cfg.mu.Unlock()
 
 		if ok {
@@ -566,7 +557,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	starts := 0
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
-		//log.Print("try again")
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -579,7 +569,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
-					//log.Printf("at index %d somebody think he is the leader :%d", index1, starts)
 					index = index1
 					break
 				}
@@ -592,7 +581,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
-				//log.Printf("at index %d,  %d server think command %d is commited (true command  %d ), the server is %d", index, nd, cmd1, cmd, starts)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
@@ -603,15 +591,14 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				time.Sleep(20 * time.Millisecond)
 			}
 			if retry == false {
-				cfg.t.Fatalf("one(%v) failed to reach agreement as retry is false", cmd)
+				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {
-			//log.Printf("sleep a while")
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	if cfg.checkFinished() == false {
-		cfg.t.Fatalf("one(%v) failed to reach agreement due to timeout", cmd)
+		cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 	}
 	return -1
 }
