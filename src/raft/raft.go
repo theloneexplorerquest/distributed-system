@@ -133,9 +133,18 @@ func (rf *Raft) persist() {
 	// Example:
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(rf.logs)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
+	if err := e.Encode(rf.currentTerm); err != nil {
+		// Handle the error
+		panic(err)
+	}
+	if err := e.Encode(rf.votedFor); err != nil {
+		// Handle the error, e.g., log it or panic
+		panic(err)
+	}
+	if err := e.Encode(rf.logs); err != nil {
+		// Handle the error
+		panic(err)
+	}
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
 }
@@ -152,13 +161,23 @@ func (rf *Raft) readPersist(data []byte) {
 	var votedFor int
 	var logs []Entry
 	var currentTerm int
-	if d.Decode(&votedFor) != nil ||
-		d.Decode(&logs) != nil {
-	} else {
-		rf.votedFor = votedFor
-		rf.logs = logs
-		rf.currentTerm = currentTerm
+	// Decode each field with detailed error handling
+	if err := d.Decode(&currentTerm); err != nil {
+		fmt.Printf("Failed to decode currentTerm: %v\n", err)
+		return
 	}
+	if err := d.Decode(&votedFor); err != nil {
+		fmt.Printf("Failed to decode votedFor: %v\n", err)
+		return
+	}
+	if err := d.Decode(&logs); err != nil {
+		fmt.Printf("Failed to decode logs: %v\n", err)
+		return
+	}
+	// Only update the state if all decodes were successful
+	rf.votedFor = votedFor
+	rf.logs = logs
+	rf.currentTerm = currentTerm
 }
 
 // the service says it has created a snapshot that has
@@ -199,6 +218,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	XIndex  int
+	XTerm   int
+	XLen    int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -208,6 +230,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//log.Printf("AppendEntriesArgs server %d Term %d PrevLogTerm: %d PrevLogIndex: %d currentTerm %d", rf.me, args.Term, args.PrevLogTerm, args.PrevLogIndex, rf.currentTerm)
 	//rf.printLogs(rf.logs)
 	//rf.printLogs(args.Entries)
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.XLen = -1
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -216,9 +241,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	rf.lastActive = time.Now()
-	if args.PrevLogIndex > len(rf.logs)-1 || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if args.PrevLogIndex > len(rf.logs)-1 {
 		reply.Success = false
-		//log.Printf("stop here2")
+		reply.XLen = len(rf.logs)
+		return
+	}
+
+	if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
+		reply.XTerm = rf.logs[args.PrevLogIndex].Term
+		xIndex := args.PrevLogIndex
+		for xIndex >= 0 {
+			if rf.logs[xIndex].Term != rf.logs[args.PrevLogIndex].Term {
+				break
+			}
+			xIndex -= 1
+		}
+		reply.XIndex = xIndex + 1
+		if reply.XIndex < 1 {
+			panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
+		}
 		return
 	}
 	//if len(args.Entries) == 0 {
@@ -233,6 +275,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		if rf.logs[index].Term != args.Entries[index-args.PrevLogIndex-1].Term {
 			rf.logs = rf.logs[:args.PrevLogIndex+1]
+			rf.persist()
 		}
 	}
 
@@ -240,6 +283,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		for i := len(rf.logs) - args.PrevLogIndex - 1; i < len(args.Entries); i++ {
 			//log.Printf("log %s[%d]append to %d\n", args.Entries[i].Command, args.Entries[i].Term, rf.me)
 			rf.logs = append(rf.logs, args.Entries[i])
+			rf.persist()
 		}
 	}
 	//rf.printLogs(rf.logs)
@@ -288,6 +332,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.currentRole = Follower
 		rf.votedFor = -1 // Reset votedFor as this is a new term
+		rf.persist()
 	}
 	lastLogIndex := len(rf.logs) - 1
 	lastLogTerm := rf.logs[lastLogIndex].Term
@@ -379,6 +424,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 		rf.logs = append(rf.logs, entry)
+		rf.persist()
 		//rf.printLogs(rf.logs)
 		logIndex := len(rf.logs) - 1
 		rf.matchIndex[rf.me] = len(rf.logs) - 1
@@ -467,7 +513,34 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 			//return
 		} else if rf.nextIndex[idx] > 1 {
 			//log.Printf("in handleAppendEntriesReply retry")
-			rf.nextIndex[idx] -= 1
+			if reply.XTerm != -1 && reply.XIndex != -1 {
+				currentIndex := rf.nextIndex[idx] - 1
+				hasTerm := false
+				for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
+					if rf.logs[currentIndex].Term == reply.Term {
+						rf.nextIndex[idx] = currentIndex
+						if rf.nextIndex[idx] < 1 {
+							panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
+						}
+						hasTerm = true
+						break
+					}
+					currentIndex -= 1
+				}
+				if hasTerm == false {
+					rf.nextIndex[idx] = reply.XIndex
+					if rf.nextIndex[idx] < 1 {
+						panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
+					}
+				}
+			} else if reply.XLen != -1 {
+				rf.nextIndex[idx] = reply.XLen
+				if rf.nextIndex[idx] < 1 {
+					panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
+				}
+			} else {
+				rf.nextIndex[idx]--
+			}
 			rf.mu.Unlock()
 		} else {
 			//log.Printf("in handleAppendEntriesReply retry bad")
@@ -478,6 +551,7 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 		rf.currentTerm = args.Term
 		rf.currentRole = Follower
 		rf.votedFor = -1
+		rf.persist()
 	}
 }
 
@@ -609,6 +683,7 @@ func (rf *Raft) startElection() {
 	//log.Printf("Term of server [%d] is increased %d, currentRole is %s, Timeout is %s", rf.me, rf.currentTerm, rf.currentRole, rf.electionTimeOut)
 	rf.currentRole = Candidate
 	rf.votedFor = rf.me
+	rf.persist()
 	rf.voteReceived = 1
 	rf.lastActive = time.Now()
 	currentTerm := rf.currentTerm
@@ -644,6 +719,7 @@ func (rf *Raft) startElection() {
 						rf.currentTerm = reply.Term
 						rf.currentRole = Follower
 						rf.votedFor = -1
+						rf.persist()
 					} else if reply.VoteGranted && reply.Term == currentTerm {
 						rf.voteReceived++
 						if rf.voteReceived > len(rf.peers)/2 {
@@ -772,6 +848,7 @@ func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentT
 				rf.currentTerm = reply.Term
 				rf.currentRole = Follower
 				rf.votedFor = -1
+				rf.persist()
 			}
 			if reply.Success {
 				rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
@@ -782,7 +859,35 @@ func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentT
 				//	slog.Int("LeaderID", rf.me),
 				//	slog.Int("FollowerID", idx))
 			} else if rf.nextIndex[idx] > 1 {
-				rf.nextIndex[idx]--
+				if reply.XTerm != -1 && reply.XIndex != -1 {
+					currentIndex := rf.nextIndex[idx] - 1
+					hasTerm := false
+					for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
+						if rf.logs[currentIndex].Term == reply.Term {
+							rf.nextIndex[idx] = currentIndex
+							if rf.nextIndex[idx] < 1 {
+								panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
+							}
+							hasTerm = true
+							break
+						}
+						currentIndex -= 1
+					}
+					if hasTerm == false {
+						rf.nextIndex[idx] = reply.XIndex
+						if rf.nextIndex[idx] < 1 {
+							panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
+						}
+					}
+				} else if reply.XLen != -1 {
+					rf.nextIndex[idx] = reply.XLen
+					if rf.nextIndex[idx] < 1 {
+						panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
+					}
+				} else {
+					rf.nextIndex[idx]--
+				}
+				//rf.nextIndex[idx]--
 				//go rf.replicateLog(idx)
 				//slog.Debug("FAILED TO REACH CONSENSU, RETRY",
 				//	slog.Int("LeaderID", rf.me),
