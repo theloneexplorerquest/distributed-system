@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -519,7 +522,7 @@ func TestBackup3B(t *testing.T) {
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-
+	log.Printf("lots of successful commands to new group.")
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
@@ -549,6 +552,8 @@ func TestBackup3B(t *testing.T) {
 	cfg.connect(other)
 
 	// lots of successful commands to new group.
+	log.Printf("lots of successful commands to new group2.")
+
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
@@ -557,6 +562,7 @@ func TestBackup3B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
+	log.Printf("now everyone.")
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
@@ -1009,7 +1015,6 @@ func internalChurn(t *testing.T, unreliable bool) {
 		cha = append(cha, make(chan []int))
 		go cfn(i, cha[i])
 	}
-
 	for iters := 0; iters < 20; iters++ {
 		if (rand.Int() % 1000) < 200 {
 			i := rand.Int() % servers
