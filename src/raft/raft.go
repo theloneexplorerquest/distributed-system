@@ -226,7 +226,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 
 	// Update last active time
-	rf.lastActive = time.Now()
 
 	reply.XTerm = -1
 	reply.XIndex = -1
@@ -291,8 +290,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			rf.commitIndex = args.LeaderCommit
 		}
-		commitIndex := rf.commitIndex
-		go rf.commitLogEntries(commitIndex)
 	}
 
 	// Update state
@@ -304,7 +301,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = args.Term
 	reply.Success = true
 
-	// Call commitLogEntries in a goroutine
+	commitIndex := rf.commitIndex
+	go rf.commitLogEntries(commitIndex)
 	return
 
 }
@@ -346,7 +344,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = args.Term
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
-		rf.lastActive = time.Now() // Reset election timer
 		rf.resetElectionTimeout()
 	} else {
 		reply.Term = rf.currentTerm
@@ -445,9 +442,13 @@ func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, lead
 	defer wg.Done()
 	appendEntriesReply := AppendEntriesReply{}
 	rf.mu.Lock()
-
+	if len(rf.logs) < rf.nextIndex[idx] {
+		rf.mu.Unlock()
+		return
+	}
 	prevLogIndex := rf.nextIndex[idx] - 1
 	entries := make([]Entry, 0)
+	// index out of bound
 	slice := rf.logs[rf.nextIndex[idx]:]
 	entries = make([]Entry, len(slice))
 	copy(entries, slice)
@@ -487,38 +488,40 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 			rf.updateCommitIndex()
 			commitIndex := rf.commitIndex
+			//rf.commitLogEntries(commitIndex)
 			rf.mu.Unlock()
 			go rf.commitLogEntries(commitIndex)
 			//return
 		} else if rf.nextIndex[idx] > 1 {
-			if reply.XTerm != -1 && reply.XIndex != -1 {
-				currentIndex := rf.nextIndex[idx] - 1
-				hasTerm := false
-				for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
-					if rf.logs[currentIndex].Term == reply.Term {
-						rf.nextIndex[idx] = currentIndex
-						if rf.nextIndex[idx] < 1 {
-							panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
-						}
-						hasTerm = true
-						break
-					}
-					currentIndex -= 1
-				}
-				if hasTerm == false {
-					rf.nextIndex[idx] = reply.XIndex
-					if rf.nextIndex[idx] < 1 {
-						panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
-					}
-				}
-			} else if reply.XLen != -1 {
-				rf.nextIndex[idx] = reply.XLen
-				if rf.nextIndex[idx] < 1 {
-					panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
-				}
-			} else {
-				rf.nextIndex[idx]--
-			}
+			//if reply.XTerm != -1 && reply.XIndex != -1 {
+			//	currentIndex := rf.nextIndex[idx] - 1
+			//	hasTerm := false
+			//	for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
+			//		if rf.logs[currentIndex].Term == reply.Term {
+			//			rf.nextIndex[idx] = currentIndex
+			//			if rf.nextIndex[idx] < 1 {
+			//				panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
+			//			}
+			//			hasTerm = true
+			//			break
+			//		}
+			//		currentIndex -= 1
+			//	}
+			//	if hasTerm == false {
+			//		rf.nextIndex[idx] = reply.XIndex
+			//		if rf.nextIndex[idx] < 1 {
+			//			panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
+			//		}
+			//	}
+			//} else if reply.XLen != -1 {
+			//	rf.nextIndex[idx] = reply.XLen
+			//	if rf.nextIndex[idx] < 1 {
+			//		panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
+			//	}
+			//} else {
+			//	rf.nextIndex[idx]--
+			//}
+			rf.nextIndex[idx]--
 			rf.mu.Unlock()
 		} else {
 			rf.mu.Unlock()
@@ -575,12 +578,6 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) resetElectionTimer() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.electionTimeOut = time.Duration(rand.Intn(int(maxElectionTimeout-minElectionTimeout))) + minElectionTimeout
-}
-
 func (rf *Raft) electionTicker() {
 	for rf.killed() == false {
 		// Sleep for the specified heartbeat check interval
@@ -602,6 +599,7 @@ func (rf *Raft) electionTicker() {
 }
 
 func (rf *Raft) resetElectionTimeout() {
+	rf.lastActive = time.Now()
 	rf.electionTimeOut = time.Duration(rand.Intn(int(maxElectionTimeout-minElectionTimeout))) + minElectionTimeout
 }
 
@@ -614,7 +612,6 @@ func (rf *Raft) startElection() {
 	rf.votedFor = rf.me
 	rf.persist()
 	rf.voteReceived = 1
-	rf.lastActive = time.Now()
 	currentTerm := rf.currentTerm
 	candidateId := rf.me
 	lastLogTerm := rf.logs[len(rf.logs)-1].Term
@@ -727,8 +724,11 @@ func (rf *Raft) sendHeartbeats() {
 func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentTerm int, leaderId int, commitIndex int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	rf.mu.Lock()
+	if rf.currentRole != Leader {
+		rf.mu.Unlock()
+		return
+	}
 	prevLogIndex := rf.nextIndex[idx] - 1
-
 	prevLogTerm := 0
 	if prevLogIndex > 0 {
 		prevLogTerm = rf.logs[prevLogIndex].Term
