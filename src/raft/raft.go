@@ -224,6 +224,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	//DPrintf(dClient, "S%d Called AppendEntries at Term %d", rf.me, rf.currentTerm)
 
 	// Update last active time
 
@@ -257,7 +258,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	// Truncate the log if there's a conflict with the incoming entries
-	entryModified := false
+	//entryModified := false
 	if len(args.Entries) > 0 {
 		start := args.PrevLogIndex + 1
 		index := 0
@@ -265,7 +266,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if start+index < len(rf.logs) {
 				if rf.logs[start+index].Term != args.Entries[index].Term {
 					rf.logs = rf.logs[:start+index]
-					entryModified = true
+					//entryModified = true
 					break
 				}
 			} else {
@@ -275,13 +276,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		// Append the new entries
 		rf.logs = append(rf.logs, args.Entries[index:]...)
-		entryModified = true
+		//entryModified = true
 	}
 
 	// Persist log if modified
-	if entryModified {
-		rf.persist()
-	}
 
 	// Update commit index
 	if args.LeaderCommit > rf.commitIndex {
@@ -292,9 +290,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
-	// Update state
-	rf.currentTerm = args.Term
+	// Update stat
+	if rf.currentTerm != args.Term {
+		//entryModified = true
+		rf.currentTerm = args.Term
+	}
 	rf.currentRole = Follower
+
+	//if entryModified {
+	//	rf.persist()
+	//}
 	rf.resetElectionTimeout()
 
 	// Send success reply
@@ -325,7 +330,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
+	//entryModified := false
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -335,7 +340,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.currentRole = Follower
 		rf.votedFor = -1 // Reset votedFor as this is a new term
-		rf.persist()
+		//entryModified = true
+		//rf.persist()
 	}
 	lastLogIndex := len(rf.logs) - 1
 	lastLogTerm := rf.logs[lastLogIndex].Term
@@ -344,11 +350,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = args.Term
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
+		//entryModified = true
 		rf.resetElectionTimeout()
 	} else {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 	}
+	//if entryModified {
+	//	rf.persist()
+	//}
+	//DPrintf(dVote, "S%d voted to %d at Term %d, request from %d, granted? %t timeout is %s", rf.me, rf.votedFor, rf.currentTerm, args.CandidateId, reply.VoteGranted, rf.electionTimeOut)
 
 }
 
@@ -412,13 +423,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 		rf.logs = append(rf.logs, entry)
-		rf.persist()
+		//rf.persist()
 		logIndex := len(rf.logs) - 1
 		rf.matchIndex[rf.me] = len(rf.logs) - 1
 		rf.mu.Unlock()
 		go rf.broadcastAppendEntries(currentTerm, leaderCommit)
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
 		return logIndex, currentTerm, true
 	}
 }
@@ -488,40 +497,44 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 			rf.updateCommitIndex()
 			commitIndex := rf.commitIndex
-			//rf.commitLogEntries(commitIndex)
 			rf.mu.Unlock()
 			go rf.commitLogEntries(commitIndex)
 			//return
+		} else if reply.Term > currentTerm {
+			rf.currentTerm = args.Term
+			rf.currentRole = Follower
+			rf.votedFor = -1
+			//rf.persist()
+			rf.mu.Unlock()
 		} else if rf.nextIndex[idx] > 1 {
-			//if reply.XTerm != -1 && reply.XIndex != -1 {
-			//	currentIndex := rf.nextIndex[idx] - 1
-			//	hasTerm := false
-			//	for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
-			//		if rf.logs[currentIndex].Term == reply.Term {
-			//			rf.nextIndex[idx] = currentIndex
-			//			if rf.nextIndex[idx] < 1 {
-			//				panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
-			//			}
-			//			hasTerm = true
-			//			break
-			//		}
-			//		currentIndex -= 1
-			//	}
-			//	if hasTerm == false {
-			//		rf.nextIndex[idx] = reply.XIndex
-			//		if rf.nextIndex[idx] < 1 {
-			//			panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
-			//		}
-			//	}
-			//} else if reply.XLen != -1 {
-			//	rf.nextIndex[idx] = reply.XLen
-			//	if rf.nextIndex[idx] < 1 {
-			//		panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
-			//	}
-			//} else {
-			//	rf.nextIndex[idx]--
-			//}
-			rf.nextIndex[idx]--
+			if reply.XTerm != -1 && reply.XIndex != -1 {
+				currentIndex := rf.nextIndex[idx] - 1
+				hasTerm := false
+				for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
+					if rf.logs[currentIndex].Term == reply.Term {
+						rf.nextIndex[idx] = currentIndex
+						if rf.nextIndex[idx] < 1 {
+							panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
+						}
+						hasTerm = true
+						break
+					}
+					currentIndex -= 1
+				}
+				if hasTerm == false {
+					rf.nextIndex[idx] = reply.XIndex
+					if rf.nextIndex[idx] < 1 {
+						panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
+					}
+				}
+			} else if reply.XLen != -1 {
+				rf.nextIndex[idx] = reply.XLen
+				if rf.nextIndex[idx] < 1 {
+					panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
+				}
+			} else {
+				rf.nextIndex[idx]--
+			}
 			rf.mu.Unlock()
 		} else {
 			rf.mu.Unlock()
@@ -531,7 +544,7 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 		rf.currentTerm = args.Term
 		rf.currentRole = Follower
 		rf.votedFor = -1
-		rf.persist()
+		//rf.persist()
 	}
 }
 
@@ -607,16 +620,18 @@ func (rf *Raft) startElection() {
 	rf.mu.Lock()
 
 	// Start election
+	//DPrintf(dCommit, "S%d start election %d, timeout is %s", rf.me, rf.currentTerm, rf.electionTimeOut)
 	rf.currentTerm++
 	rf.currentRole = Candidate
 	rf.votedFor = rf.me
-	rf.persist()
+	//rf.persist()
 	rf.voteReceived = 1
 	currentTerm := rf.currentTerm
 	candidateId := rf.me
 	lastLogTerm := rf.logs[len(rf.logs)-1].Term
 	lastLogIndex := len(rf.logs) - 1
 	rf.resetElectionTimeout()
+	electionTimeout := time.After(rf.electionTimeOut)
 	rf.mu.Unlock()
 
 	var wg sync.WaitGroup
@@ -633,6 +648,7 @@ func (rf *Raft) startElection() {
 					LastLogIndex: lastLogIndex,
 				}
 				reply := RequestVoteReply{}
+				//DPrintf(dTerm, "S%d Request to vote at Term %d, request to %d at %s", rf.me, rf.currentTerm, idx, args.Time)
 				if peer.Call("Raft.RequestVote", &args, &reply) {
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
@@ -643,7 +659,7 @@ func (rf *Raft) startElection() {
 						rf.currentTerm = reply.Term
 						rf.currentRole = Follower
 						rf.votedFor = -1
-						rf.persist()
+						//rf.persist()
 					} else if reply.VoteGranted && reply.Term == currentTerm {
 						rf.voteReceived++
 						if rf.voteReceived > len(rf.peers)/2 {
@@ -653,6 +669,7 @@ func (rf *Raft) startElection() {
 								rf.matchIndex[i] = 0
 							}
 							go rf.sendHeartbeats()
+							voteCh <- true
 						}
 					}
 				}
@@ -664,14 +681,12 @@ func (rf *Raft) startElection() {
 		wg.Wait()
 		voteCh <- true
 	}()
-	rf.mu.Lock()
-	electionTimeout := time.After(rf.electionTimeOut)
-	rf.mu.Unlock()
 	for {
 		select {
 		case <-voteCh:
 			rf.mu.Lock()
 			if rf.currentRole == Candidate && rf.voteReceived > len(rf.peers)/2 {
+				DPrintf(dLeader, "S%d Leader elected", rf.me)
 				rf.currentRole = Leader
 				for i := range rf.nextIndex {
 					rf.nextIndex[i] = len(rf.logs) // Replace initialValue with the desired default value
@@ -762,9 +777,8 @@ func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentT
 				rf.currentTerm = reply.Term
 				rf.currentRole = Follower
 				rf.votedFor = -1
-				rf.persist()
-			}
-			if reply.Success {
+				//rf.persist()
+			} else if reply.Success && reply.Term == currentTerm {
 				rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
 				rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 			} else if rf.nextIndex[idx] > 1 {
@@ -825,7 +839,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentRole = Follower
 	rf.voteReceived = 0
 	rf.votedFor = -1
-	rf.electionTimeOut = time.Duration(rand.Intn(int(maxElectionTimeout-minElectionTimeout))) + minElectionTimeout
+	rf.resetElectionTimeout()
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.applyCh = applyCh

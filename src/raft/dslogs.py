@@ -8,8 +8,7 @@ from rich import print
 from rich.columns import Columns
 from rich.console import Console
 from rich.traceback import install
-print("[#67a0b2]This text should be blue.[/#67a0b2]")
-print("[#fe2c79]This text should be pink.[/#fe2c79]")
+
 # fmt: off
 # Mapping from topics to colors
 TOPICS = {
@@ -17,7 +16,7 @@ TOPICS = {
     "VOTE": "#67a0b2",
     "LEAD": "#d0b343",
     "TERM": "#70c43f",
-    "LOG1": "#4878bc",
+    "LEADER_ELECTED": "#4878bc",
     "LOG2": "#398280",
     "CMIT": "#98719f",
     "PERS": "#d08341",
