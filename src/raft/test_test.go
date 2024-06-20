@@ -737,7 +737,7 @@ func TestPersist23C(t *testing.T) {
 		index++
 
 		leader1 := cfg.checkOneLeader()
-		DPrintf(dLeader, "S%d is the init leader at round %d, about to use %d", leader1, iters, 10+index)
+		//DPrintf(dLeader, "S%d is the init leader at round %d, about to use %d", leader1, iters, 10+index)
 
 		cfg.disconnect((leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
