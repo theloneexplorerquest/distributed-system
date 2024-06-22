@@ -105,6 +105,7 @@ type Raft struct {
 	nextIndex       []int
 	matchIndex      []int
 	applyCh         chan ApplyMsg
+	currentTime     time.Time
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -290,9 +291,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// Update stat
-	if rf.currentTerm != args.Term {
-		rf.currentTerm = args.Term
-	}
+	rf.currentTerm = args.Term
 	rf.currentRole = Follower
 
 	rf.resetElectionTimeout()
@@ -531,9 +530,7 @@ func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply
 		}
 
 	} else if args.Term > currentTerm {
-		rf.currentTerm = args.Term
-		rf.currentRole = Follower
-		rf.votedFor = -1
+		rf.stepDownAsFollower(args.Term)
 		rf.persist()
 	}
 }
@@ -629,6 +626,7 @@ func (rf *Raft) startElection() {
 
 	lastLogTerm, lastLogIndex := rf.getLastLogInfo()
 	electionTimeout := time.After(rf.electionTimeOut)
+	rf.currentTime = time.Now()
 	rf.resetElectionTimeout()
 	rf.persist()
 	rf.mu.Unlock()
@@ -648,7 +646,7 @@ func (rf *Raft) startElection() {
 		select {
 		case <-electionTimeout:
 			rf.mu.Lock()
-			DPrintf(dCommit, "S%d failed to elect a leader %d, timeout is %s", rf.me, rf.currentTerm, rf.electionTimeOut)
+			DPrintf(dCommit, "S%d failed to elect a leader (term %d), timeout is %s", rf.me, rf.currentTerm, rf.electionTimeOut)
 			rf.mu.Unlock()
 			return
 		}
@@ -683,7 +681,7 @@ func (rf *Raft) handleVoteReply(reply RequestVoteReply, currentTerm int) {
 		rf.voteReceived++
 		//DPrintf(dLeader, "S%d (term %d) get vote from S%d, current vote received %d ", rf.me, rf.currentTerm, idx, rf.voteReceived)
 		if rf.voteReceived > len(rf.peers)/2 {
-			DPrintf(dLeader, "S%d elected (term %d), time %s, log %s", rf.me, rf.currentTerm, time.Now(), rf.PrintLogs())
+			DPrintf(dLeader, "S%d elected (term %d), time take %s, timeout %s, log %s", rf.me, rf.currentTerm, time.Now().Sub(rf.currentTime), rf.electionTimeOut, rf.PrintLogs())
 			rf.currentRole = Leader
 			rf.resetIndex()
 		}
