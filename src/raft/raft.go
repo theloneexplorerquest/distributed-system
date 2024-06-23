@@ -76,8 +76,8 @@ func (cr CurrentRole) String() string {
 }
 
 const (
-	minElectionTimeout     = 300 * time.Millisecond // Minimum election timeout
-	maxElectionTimeout     = 800 * time.Millisecond // Maximum election timeout
+	minElectionTimeout     = 200 * time.Millisecond // Minimum election timeout
+	maxElectionTimeout     = 400 * time.Millisecond // Maximum election timeout
 	heartbeatCheckInterval = 100 * time.Millisecond // Consistent heartbeat interval
 )
 
@@ -105,6 +105,7 @@ type Raft struct {
 	nextIndex       []int
 	matchIndex      []int
 	applyCh         chan ApplyMsg
+	winElectionCh   chan bool
 	currentTime     time.Time
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
@@ -408,7 +409,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	} else {
 		currentTerm := rf.currentTerm
-		leaderCommit := rf.commitIndex
 		entry := Entry{
 			Term:    rf.currentTerm,
 			Command: command,
@@ -416,124 +416,97 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.logs = append(rf.logs, entry)
 		rf.persist()
 		logIndex := len(rf.logs) - 1
-		rf.matchIndex[rf.me] = len(rf.logs) - 1
+		//rf.matchIndex[rf.me] = len(rf.logs) - 1
 		rf.mu.Unlock()
-		go rf.broadcastAppendEntries(currentTerm, leaderCommit)
+		//go rf.broadcastAppendEntries(currentTerm, leaderCommit)
 		return logIndex, currentTerm, true
 	}
 }
 
-func (rf *Raft) broadcastAppendEntries(currentTerm int, leaderCommit int) {
-	var wg sync.WaitGroup
-	for idx, peer := range rf.peers {
-		rf.mu.Lock()
-		if idx != rf.me && len(rf.logs) >= rf.nextIndex[idx] {
-			rf.mu.Unlock()
-			wg.Add(1)
-			go rf.sendAppendEntries(peer, idx, currentTerm, leaderCommit, &wg)
-		} else {
-			rf.mu.Unlock()
-		}
-	}
-	wg.Wait()
-}
+//func (rf *Raft) broadcastAppendEntries(currentTerm int, leaderCommit int) {
+//	var wg sync.WaitGroup
+//	for idx, peer := range rf.peers {
+//		rf.mu.Lock()
+//		if idx != rf.me && len(rf.logs) >= rf.nextIndex[idx] {
+//			rf.mu.Unlock()
+//			wg.Add(1)
+//			go rf.sendAppendEntries(peer, idx, currentTerm, leaderCommit, &wg)
+//		} else {
+//			rf.mu.Unlock()
+//		}
+//	}
+//	wg.Wait()
+//}
 
-func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, leaderCommit int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	appendEntriesReply := AppendEntriesReply{}
-	rf.mu.Lock()
-	if len(rf.logs) < rf.nextIndex[idx] {
-		rf.mu.Unlock()
-		return
-	}
-	prevLogIndex := rf.nextIndex[idx] - 1
-	entries := make([]Entry, 0)
-	// index out of bound
-	slice := rf.logs[rf.nextIndex[idx]:]
-	entries = make([]Entry, len(slice))
-	copy(entries, slice)
-	prevLogTerm := 0
-	if prevLogIndex > 0 {
-		prevLogTerm = rf.logs[prevLogIndex].Term
-	}
-	rf.mu.Unlock()
-	appendEntriesArgs := AppendEntriesArgs{
-		Term:         currentTerm,
-		LeaderId:     rf.me,
-		PrevLogIndex: prevLogIndex,
-		PrevLogTerm:  prevLogTerm,
-		Entries:      entries,
-		LeaderCommit: leaderCommit,
-	}
-	for {
-		response := peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply)
-		if response {
-			rf.handleAppendEntriesReply(idx, &appendEntriesArgs, &appendEntriesReply)
-			return
-		} else {
-			time.Sleep(heartbeatCheckInterval)
-		}
-	}
-}
+//func (rf *Raft) sendAppendEntries(peer *labrpc.ClientEnd, idx, currentTerm, leaderCommit int, wg *sync.WaitGroup) {
+//	defer wg.Done()
+//	appendEntriesReply := AppendEntriesReply{}
+//	rf.mu.Lock()
+//	if len(rf.logs) < rf.nextIndex[idx] {
+//		rf.mu.Unlock()
+//		return
+//	}
+//	prevLogIndex := rf.nextIndex[idx] - 1
+//	entries := make([]Entry, 0)
+//	// index out of bound
+//	slice := rf.logs[rf.nextIndex[idx]:]
+//	entries = make([]Entry, len(slice))
+//	copy(entries, slice)
+//	prevLogTerm := 0
+//	if prevLogIndex > 0 {
+//		prevLogTerm = rf.logs[prevLogIndex].Term
+//	}
+//	rf.mu.Unlock()
+//	appendEntriesArgs := AppendEntriesArgs{
+//		Term:         currentTerm,
+//		LeaderId:     rf.me,
+//		PrevLogIndex: prevLogIndex,
+//		PrevLogTerm:  prevLogTerm,
+//		Entries:      entries,
+//		LeaderCommit: leaderCommit,
+//	}
+//	for {
+//		response := peer.Call("Raft.AppendEntries", &appendEntriesArgs, &appendEntriesReply)
+//		if response {
+//			rf.handleAppendEntriesReply(idx, &appendEntriesArgs, &appendEntriesReply)
+//			return
+//		} else {
+//			time.Sleep(heartbeatCheckInterval)
+//		}
+//	}
+//}
 
-func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	currentTerm := rf.currentTerm
-	currentRole := rf.currentRole
-	rf.mu.Unlock()
-	if reply.Term == currentTerm && currentRole == Leader {
-		rf.mu.Lock()
-		if reply.Success && args.PrevLogIndex+len(args.Entries)+1 >= rf.nextIndex[idx] {
-			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
-			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
-			rf.updateCommitIndex()
-			commitIndex := rf.commitIndex
-			rf.mu.Unlock()
-			go rf.commitLogEntries(commitIndex)
-			//return
-		} else if reply.Term > currentTerm {
-			rf.stepDownAsFollower(reply.Term)
-			rf.persist()
-			rf.mu.Unlock()
-		} else if rf.nextIndex[idx] > 1 {
-			if reply.XTerm != -1 && reply.XIndex != -1 {
-				currentIndex := rf.nextIndex[idx] - 1
-				hasTerm := false
-				for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
-					if rf.logs[currentIndex].Term == reply.Term {
-						rf.nextIndex[idx] = currentIndex
-						if rf.nextIndex[idx] < 1 {
-							panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
-						}
-						hasTerm = true
-						break
-					}
-					currentIndex -= 1
-				}
-				if hasTerm == false {
-					rf.nextIndex[idx] = reply.XIndex
-					if rf.nextIndex[idx] < 1 {
-						panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
-					}
-				}
-			} else if reply.XLen != -1 {
-				rf.nextIndex[idx] = reply.XLen
-				if rf.nextIndex[idx] < 1 {
-					panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
-				}
-			} else {
-				rf.nextIndex[idx]--
-			}
-			rf.mu.Unlock()
-		} else {
-			rf.mu.Unlock()
-		}
-
-	} else if args.Term > currentTerm {
-		rf.stepDownAsFollower(args.Term)
-		rf.persist()
-	}
-}
+//func (rf *Raft) handleAppendEntriesReply(idx int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+//	rf.mu.Lock()
+//	currentTerm := rf.currentTerm
+//	currentRole := rf.currentRole
+//	rf.mu.Unlock()
+//	if reply.Term == currentTerm && currentRole == Leader {
+//		rf.mu.Lock()
+//		if reply.Success && args.PrevLogIndex+len(args.Entries)+1 >= rf.nextIndex[idx] {
+//			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
+//			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
+//			rf.updateCommitIndex()
+//			commitIndex := rf.commitIndex
+//			rf.mu.Unlock()
+//			go rf.commitLogEntries(commitIndex)
+//			//return
+//		} else if reply.Term > currentTerm {
+//			rf.stepDownAsFollower(reply.Term)
+//			rf.persist()
+//			rf.mu.Unlock()
+//		} else if rf.nextIndex[idx] > 1 {
+//			rf.backwardNextIndex(reply.XTerm, reply.XIndex, reply.XLen, idx, reply.XTerm)
+//			rf.mu.Unlock()
+//		} else {
+//			rf.mu.Unlock()
+//		}
+//
+//	} else if args.Term > currentTerm {
+//		rf.stepDownAsFollower(args.Term)
+//		rf.persist()
+//	}
+//}
 
 func (rf *Raft) stepDownAsFollower(term int) {
 	rf.currentTerm = term
@@ -594,9 +567,10 @@ func (rf *Raft) electionTicker() {
 
 		rf.mu.Lock()
 		if rf.currentRole != Leader && time.Since(rf.lastActive) >= rf.electionTimeOut {
+			currentRole := rf.currentRole
 			rf.mu.Unlock()
 			// Start an election
-			rf.startElection()
+			rf.startElection(currentRole)
 		} else {
 			rf.mu.Unlock()
 		}
@@ -615,8 +589,12 @@ func (rf *Raft) getLastLogInfo() (int, int) {
 	return lastLogTerm, lastLogIndex
 }
 
-func (rf *Raft) startElection() {
+func (rf *Raft) startElection(currentRole CurrentRole) {
 	rf.mu.Lock()
+	if rf.currentRole != currentRole {
+		rf.mu.Unlock()
+		return
+	}
 
 	// Start election
 	//DPrintf(dCommit, "S%d start election %d, timeout is %s", rf.me, rf.currentTerm, rf.electionTimeOut)
@@ -631,19 +609,17 @@ func (rf *Raft) startElection() {
 	rf.persist()
 	rf.mu.Unlock()
 
-	//var wg sync.WaitGroup
 	for idx, peer := range rf.peers {
 		if idx != candidateId {
-			//wg.Add(1)
 			go rf.sendVoteRequest(peer, currentTerm, candidateId, lastLogTerm, lastLogIndex)
 		}
 	}
 
-	//go func() {
-	//	wg.Wait()
-	//}()
 	for {
 		select {
+		case <-rf.winElectionCh:
+			rf.convertToLeader()
+			return
 		case <-electionTimeout:
 			rf.mu.Lock()
 			DPrintf(dCommit, "S%d failed to elect a leader (term %d), timeout is %s", rf.me, rf.currentTerm, rf.electionTimeOut)
@@ -651,6 +627,21 @@ func (rf *Raft) startElection() {
 			return
 		}
 	}
+}
+
+func (rf *Raft) convertToLeader() {
+	rf.mu.Lock()
+	DPrintf(dLeader, "S%d elected (term %d), time take %s, timeout %s, log %s", rf.me, rf.currentTerm, time.Now().Sub(rf.currentTime), rf.electionTimeOut, rf.PrintLogs())
+	rf.currentRole = Leader
+	rf.winElectionCh = make(chan bool)
+	rf.resetIndex()
+	for idx, peer := range rf.peers {
+		if idx != rf.me {
+			//wg.Add(1)
+			go rf.sendHeartbeatsToServer(peer, idx, rf.currentTerm, rf.me, rf.commitIndex)
+		}
+	}
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) sendVoteRequest(peer *labrpc.ClientEnd, currentTerm int, candidateId int, lastLogTerm int, lastLogIndex int) {
@@ -681,9 +672,10 @@ func (rf *Raft) handleVoteReply(reply RequestVoteReply, currentTerm int) {
 		rf.voteReceived++
 		//DPrintf(dLeader, "S%d (term %d) get vote from S%d, current vote received %d ", rf.me, rf.currentTerm, idx, rf.voteReceived)
 		if rf.voteReceived > len(rf.peers)/2 {
-			DPrintf(dLeader, "S%d elected (term %d), time take %s, timeout %s, log %s", rf.me, rf.currentTerm, time.Now().Sub(rf.currentTime), rf.electionTimeOut, rf.PrintLogs())
-			rf.currentRole = Leader
-			rf.resetIndex()
+			select {
+			case rf.winElectionCh <- true:
+			default:
+			}
 		}
 	}
 }
@@ -709,15 +701,12 @@ func (rf *Raft) sendHeartbeats() {
 
 		rf.mu.Unlock()
 
-		var wg sync.WaitGroup
 		for idx, peer := range rf.peers {
 			if idx != rf.me {
-				wg.Add(1)
-				go rf.sendHeartbeatsToServer(peer, idx, currentTerm, leaderId, commitIndex, &wg)
+				go rf.sendHeartbeatsToServer(peer, idx, currentTerm, leaderId, commitIndex)
 			}
 		}
 
-		wg.Wait()
 		time.Sleep(heartbeatCheckInterval)
 	}
 }
@@ -729,8 +718,8 @@ func (rf *Raft) initiateElection() {
 	rf.voteReceived = 1
 }
 
-func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentTerm int, leaderId int, commitIndex int, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentTerm int, leaderId int, commitIndex int) {
+	//defer wg.Done()
 	rf.mu.Lock()
 	if rf.currentRole != Leader {
 		rf.mu.Unlock()
@@ -773,53 +762,58 @@ func (rf *Raft) sendHeartbeatsToServer(peer *labrpc.ClientEnd, idx int, currentT
 				rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
 				rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 			} else if rf.nextIndex[idx] > 1 {
-				if reply.XTerm != -1 && reply.XIndex != -1 {
-					currentIndex := rf.nextIndex[idx] - 1
-					hasTerm := false
-					for currentIndex >= 1 && rf.logs[currentIndex].Term >= reply.XTerm {
-						if rf.logs[currentIndex].Term == reply.Term {
-							rf.nextIndex[idx] = currentIndex
-							if rf.nextIndex[idx] < 1 {
-								panic(fmt.Sprintf("currentIndex out of range: %d", reply.XIndex))
-							}
-							hasTerm = true
-							break
-						}
-						currentIndex -= 1
-					}
-					if hasTerm == false {
-						rf.nextIndex[idx] = reply.XIndex
-						if rf.nextIndex[idx] < 1 {
-							panic(fmt.Sprintf("XIndex out of range: %d", reply.XIndex))
-						}
-					}
-				} else if reply.XLen != -1 {
-					rf.nextIndex[idx] = reply.XLen
-					if rf.nextIndex[idx] < 1 {
-						panic(fmt.Sprintf("XLen out of range: %d", reply.XIndex))
-					}
-				} else {
-					rf.nextIndex[idx]--
-				}
+				rf.backwardNextIndex(reply.XTerm, reply.XIndex, reply.XLen, idx, reply.XTerm)
 			}
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(heartbeatCheckInterval):
+		return
+	}
+}
+
+func (rf *Raft) backwardNextIndex(xTerm int, xIndex int, xLen int, idx int, term int) {
+	if xTerm != -1 && xIndex != -1 {
+		currentIndex := rf.nextIndex[idx] - 1
+		hasTerm := false
+		for currentIndex >= 1 && rf.logs[currentIndex].Term >= xTerm {
+			if rf.logs[currentIndex].Term == term {
+				rf.nextIndex[idx] = currentIndex
+				//if rf.nextIndex[idx] < 1 {
+				//	panic(fmt.Sprintf("currentIndex out of range: %d", xIndex))
+				//}
+				hasTerm = true
+				break
+			}
+			currentIndex -= 1
+		}
+		if hasTerm == false {
+			rf.nextIndex[idx] = xIndex
+			//if rf.nextIndex[idx] < 1 {
+			//	panic(fmt.Sprintf("XIndex out of range: %d", xIndex))
+			//}
+		}
+	} else if xLen != -1 {
+		rf.nextIndex[idx] = xLen
+		//if rf.nextIndex[idx] < 1 {
+		//	panic(fmt.Sprintf("XLen out of range: %d", xIndex))
+		//}
+	} else {
+		rf.nextIndex[idx]--
 	}
 }
 
 func (rf *Raft) PrintLogs() string {
 	var sb strings.Builder
 	sb.WriteString("[")
-	for index, entry := range rf.logs[1:] {
-		if rf.commitIndex < index {
-			sb.WriteString(fmt.Sprintf("%d:%v(%d, f)", index, entry.Command, entry.Term))
-		} else {
-			sb.WriteString(fmt.Sprintf("%d:%v(%d)", index, entry.Command, entry.Term))
-		}
-		if index < len(rf.logs)-1 {
-			sb.WriteString(", ")
-		}
-	}
+	//for index, entry := range rf.logs[1:] {
+	//	if rf.commitIndex < index {
+	//		sb.WriteString(fmt.Sprintf("%d:%v(%d, f)", index, entry.Command, entry.Term))
+	//	} else {
+	//		sb.WriteString(fmt.Sprintf("%d:%v(%d)", index, entry.Command, entry.Term))
+	//	}
+	//	if index < len(rf.logs)-1 {
+	//		sb.WriteString(", ")
+	//	}
+	//}
 	sb.WriteString("]")
 	return sb.String()
 }
@@ -846,6 +840,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.applyCh = applyCh
+	rf.winElectionCh = make(chan bool)
 	rf.logs = make([]Entry, 1)
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
