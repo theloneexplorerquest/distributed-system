@@ -4,6 +4,7 @@ import (
 	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raft"
+	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -17,34 +18,113 @@ import (
 //	return
 //}
 
+type operation int
+
+const (
+	GET    string = "GET"
+	PUT           = "PUT"
+	APPEND        = "APPEND"
+)
+
 type Op struct {
+	Operation string
+	Key       string
+	Value     string
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
 
 type KVServer struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
+	mu       sync.Mutex
+	me       int
+	rf       *raft.Raft
+	applyCh  chan raft.ApplyMsg
+	getCh    chan bool
+	putCh    chan bool
+	appendCh chan bool
+	dead     int32 // set by Kill()
 
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	m map[string]string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	operation := Op{Operation: GET, Key: args.Key}
+	//kv.rf.Start(operation)
+	_, _, isLeader := kv.rf.Start(operation)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	} else {
+		for {
+			select {
+			case <-kv.getCh:
+				value, exists := kv.m[args.Key]
+				if exists {
+					reply.Value = value
+				} else {
+					reply.Value = ""
+				}
+				return
+			}
+		}
+	}
+	//value, exists := kv.m[args.Key]
+	//if exists {
+	//	reply.Value = value
+	//} else {
+	//	reply.Value = ""
+	//}
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	operation := Op{Operation: PUT, Key: args.Key, Value: args.Value}
+	//kv.rf.Start(operation)
+	_, _, isLeader := kv.rf.Start(operation)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	} else {
+		for {
+			select {
+			case <-kv.putCh:
+				log.Printf("return put")
+				kv.m[args.Key] = args.Value
+				kv.putCh = make(chan bool)
+				return
+			}
+		}
+	}
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	operation := Op{Operation: APPEND, Key: args.Key, Value: args.Value}
+	_, _, isLeader := kv.rf.Start(operation)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	} else {
+		for {
+			select {
+			case <-kv.appendCh:
+				if value, keyExists := kv.m[args.Key]; keyExists {
+					kv.m[args.Key] = value + args.Value
+				} else {
+					kv.m[args.Key] = args.Value
+				}
+				return
+			}
+		}
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -90,9 +170,35 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.getCh = make(chan bool)
+	kv.putCh = make(chan bool)
+	kv.appendCh = make(chan bool)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	kv.m = make(map[string]string)
+	//log.Printf("get applyCh: %v\n", kv.applyCh)
 	// You may need initialization code here.
-
+	go kv.runKVServer()
 	return kv
+}
+
+func (kv *KVServer) runKVServer() {
+	for !kv.killed() {
+		select {
+		case applyCh := <-kv.applyCh:
+			log.Printf("applyCh a %v %t \n", applyCh.Command, applyCh.CommandValid)
+			command := applyCh.Command.(Op)
+			if command.Operation == PUT {
+				kv.putCh <- true
+			} else if command.Operation == APPEND {
+				kv.appendCh <- true
+			} else if command.Operation == GET {
+				kv.getCh <- true
+			}
+		}
+	}
+}
+func (kv *KVServer) resetChannels() {
+	kv.getCh = make(chan bool)
+	kv.putCh = make(chan bool)
+	kv.appendCh = make(chan bool)
 }
