@@ -18,8 +18,6 @@ import (
 //	return
 //}
 
-type operation int
-
 const (
 	GET    string = "GET"
 	PUT           = "PUT"
@@ -52,8 +50,8 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
 	operation := Op{Operation: GET, Key: args.Key}
 	//kv.rf.Start(operation)
 	_, _, isLeader := kv.rf.Start(operation)
@@ -61,18 +59,18 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrWrongLeader
 		return
 	} else {
-		for {
-			select {
-			case <-kv.getCh:
-				value, exists := kv.m[args.Key]
-				if exists {
-					reply.Value = value
-				} else {
-					reply.Value = ""
-				}
-				return
-			}
-		}
+		//for {
+		//	select {
+		//	case <-kv.getCh:
+		//		value, exists := kv.m[args.Key]
+		//		if exists {
+		//			reply.Value = value
+		//		} else {
+		//			reply.Value = ""
+		//		}
+		//		return
+		//	}
+		//}
 	}
 	//value, exists := kv.m[args.Key]
 	//if exists {
@@ -85,9 +83,10 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	//log.Printf("start put")
 	operation := Op{Operation: PUT, Key: args.Key, Value: args.Value}
-	//kv.rf.Start(operation)
 	_, _, isLeader := kv.rf.Start(operation)
+	//log.Printf("after start")
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -105,25 +104,25 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	//kv.mu.Lock()
+	//defer kv.mu.Unlock()
 	operation := Op{Operation: APPEND, Key: args.Key, Value: args.Value}
 	_, _, isLeader := kv.rf.Start(operation)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	} else {
-		for {
-			select {
-			case <-kv.appendCh:
-				if value, keyExists := kv.m[args.Key]; keyExists {
-					kv.m[args.Key] = value + args.Value
-				} else {
-					kv.m[args.Key] = args.Value
-				}
-				return
-			}
-		}
+		//for {
+		//	select {
+		//	case <-kv.appendCh:
+		//		if value, keyExists := kv.m[args.Key]; keyExists {
+		//			kv.m[args.Key] = value + args.Value
+		//		} else {
+		//			kv.m[args.Key] = args.Value
+		//		}
+		//		return
+		//	}
+		//}
 	}
 }
 
@@ -189,12 +188,14 @@ func (kv *KVServer) runKVServer() {
 			command := applyCh.Command.(Op)
 			if command.Operation == PUT {
 				kv.putCh <- true
-			} else if command.Operation == APPEND {
-				kv.appendCh <- true
-			} else if command.Operation == GET {
-				kv.getCh <- true
 			}
+			//} else if command.Operation == APPEND {
+			//	kv.appendCh <- true
+			//} else if command.Operation == GET {
+			//	kv.getCh <- true
+			//}
 		}
+		log.Printf("runServer")
 	}
 }
 func (kv *KVServer) resetChannels() {

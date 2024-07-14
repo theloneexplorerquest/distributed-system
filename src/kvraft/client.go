@@ -42,14 +42,15 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
 	reply := GetReply{}
-	for {
-		response := ck.servers[nrand()%ck.n].Call("KVServer.Get", &args, &reply)
-		if response && reply.Err != ErrWrongLeader {
-			break
-		} else {
-			time.Sleep(time.Millisecond * 100)
-		}
-	}
+	//for {
+	//	response := ck.servers[nrand()%ck.n].Call("KVServer.Get", &args, &reply)
+	//	if response && reply.Err != ErrWrongLeader {
+	//		break
+	//	} else {
+	//		log.Printf("timeoutget")
+	//		time.Sleep(time.Millisecond * 100)
+	//	}
+	//}
 	// You will have to modify this function.
 	return reply.Value
 }
@@ -69,6 +70,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Value = value
 	reply := PutAppendReply{}
 	for {
+		//log.Printf("timeoutPutStart")
 		response := false
 		if op == "Put" {
 			response = ck.servers[nrand()%ck.n].Call("KVServer.Put", &args, &reply)
@@ -80,6 +82,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		} else {
 			time.Sleep(time.Millisecond * 100)
 		}
+		//log.Printf("timeoutPut")
 	}
 	// You will have to modify this function.
 }
