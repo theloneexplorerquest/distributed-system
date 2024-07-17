@@ -4,7 +4,7 @@ import (
 	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raft"
-	"log"
+	_ "net/http/pprof"
 	"sync"
 	"sync/atomic"
 )
@@ -28,20 +28,24 @@ type Op struct {
 	Operation string
 	Key       string
 	Value     string
+	ClientId  int64
+	SeqNum    int64
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
 
 type KVServer struct {
-	mu       sync.Mutex
-	me       int
-	rf       *raft.Raft
-	applyCh  chan raft.ApplyMsg
-	getCh    chan bool
-	putCh    chan bool
-	appendCh chan bool
-	dead     int32 // set by Kill()
+	mu          sync.Mutex
+	me          int
+	rf          *raft.Raft
+	applyCh     chan raft.ApplyMsg
+	getCh       chan bool
+	putCh       chan bool
+	appendCh    chan bool
+	dead        int32 // set by Kill()
+	channels    map[int64]chan Op
+	prevRequest map[int64]map[int64]struct{}
 
 	maxraftstate int // snapshot if log grows this big
 
@@ -50,79 +54,100 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	//kv.mu.Lock()
-	//defer kv.mu.Unlock()
-	operation := Op{Operation: GET, Key: args.Key}
-	//kv.rf.Start(operation)
+	operation := Op{Operation: GET, Key: args.Key, ClientId: args.ClientId, SeqNum: args.SeqNum}
 	_, _, isLeader := kv.rf.Start(operation)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
-	} else {
-		//for {
-		//	select {
-		//	case <-kv.getCh:
-		//		value, exists := kv.m[args.Key]
-		//		if exists {
-		//			reply.Value = value
-		//		} else {
-		//			reply.Value = ""
-		//		}
-		//		return
-		//	}
-		//}
 	}
-	//value, exists := kv.m[args.Key]
-	//if exists {
-	//	reply.Value = value
-	//} else {
-	//	reply.Value = ""
-	//}
+
+	opChan := make(chan Op, 1)
+	kv.mu.Lock()
+	kv.channels[args.ClientId^args.SeqNum] = opChan
+	kv.mu.Unlock()
+
+	select {
+	case result := <-opChan:
+		kv.mu.Lock()
+		delete(kv.channels, args.ClientId^args.SeqNum)
+		if result.Operation == GET {
+			reply.Value = kv.m[args.Key]
+			reply.Err = OK
+		} else {
+			reply.Err = ErrWrongLeader
+		}
+		kv.mu.Unlock()
+	}
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	//log.Printf("start put")
-	operation := Op{Operation: PUT, Key: args.Key, Value: args.Value}
+	if _, exists := kv.prevRequest[args.ClientId][args.SeqNum]; exists {
+		//log.Printf("caught in put")
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+	operation := Op{Operation: PUT, Key: args.Key, Value: args.Value, ClientId: args.ClientId, SeqNum: args.SeqNum}
 	_, _, isLeader := kv.rf.Start(operation)
-	//log.Printf("after start")
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
-	} else {
-		for {
-			select {
-			case <-kv.putCh:
-				log.Printf("return put")
-				kv.m[args.Key] = args.Value
-				kv.putCh = make(chan bool)
-				return
-			}
+	}
+
+	opChan := make(chan Op, 1)
+	kv.mu.Lock()
+	kv.channels[args.ClientId^args.SeqNum] = opChan
+	kv.mu.Unlock()
+
+	select {
+	case <-opChan:
+		kv.mu.Lock()
+		delete(kv.channels, args.ClientId^args.SeqNum)
+		if _, exists := kv.prevRequest[args.ClientId]; !exists {
+			// If not, create a new set
+			kv.prevRequest[args.ClientId] = make(map[int64]struct{})
 		}
+
+		// Add the element to the set
+		kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+		kv.mu.Unlock()
 	}
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	//kv.mu.Lock()
-	//defer kv.mu.Unlock()
-	operation := Op{Operation: APPEND, Key: args.Key, Value: args.Value}
+	kv.mu.Lock()
+	//log.Printf("log %s %d", args.Value, args.SeqNum)
+	if _, exists := kv.prevRequest[args.ClientId][args.SeqNum]; exists {
+		//log.Printf("caught in append")
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+	operation := Op{Operation: APPEND, Key: args.Key, Value: args.Value, ClientId: args.ClientId, SeqNum: args.SeqNum}
 	_, _, isLeader := kv.rf.Start(operation)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
-	} else {
-		//for {
-		//	select {
-		//	case <-kv.appendCh:
-		//		if value, keyExists := kv.m[args.Key]; keyExists {
-		//			kv.m[args.Key] = value + args.Value
-		//		} else {
-		//			kv.m[args.Key] = args.Value
-		//		}
-		//		return
-		//	}
-		//}
+	}
+
+	opChan := make(chan Op, 1)
+	kv.mu.Lock()
+	kv.channels[args.ClientId^args.SeqNum] = opChan
+	kv.mu.Unlock()
+
+	select {
+	case <-opChan:
+		kv.mu.Lock()
+		delete(kv.channels, args.ClientId^args.SeqNum)
+		if _, exists := kv.prevRequest[args.ClientId]; !exists {
+			// If not, create a new set
+			kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+		}
+
+		// Add the element to the set
+		kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+		kv.mu.Unlock()
 	}
 }
 
@@ -174,6 +199,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.appendCh = make(chan bool)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.m = make(map[string]string)
+	kv.channels = make(map[int64]chan Op)
+	kv.prevRequest = make(map[int64]map[int64]struct{})
 	//log.Printf("get applyCh: %v\n", kv.applyCh)
 	// You may need initialization code here.
 	go kv.runKVServer()
@@ -183,23 +210,26 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 func (kv *KVServer) runKVServer() {
 	for !kv.killed() {
 		select {
-		case applyCh := <-kv.applyCh:
-			log.Printf("applyCh a %v %t \n", applyCh.Command, applyCh.CommandValid)
-			command := applyCh.Command.(Op)
-			if command.Operation == PUT {
-				kv.putCh <- true
+		case applyMsg := <-kv.applyCh:
+			if !applyMsg.CommandValid {
+				continue
 			}
-			//} else if command.Operation == APPEND {
-			//	kv.appendCh <- true
-			//} else if command.Operation == GET {
-			//	kv.getCh <- true
-			//}
+			command := applyMsg.Command.(Op)
+			kv.mu.Lock()
+			switch command.Operation {
+			case PUT:
+				kv.m[command.Key] = command.Value
+			case APPEND:
+				kv.m[command.Key] += command.Value
+			case GET:
+				// do nothing
+			}
+			if ch, ok := kv.channels[command.ClientId^command.SeqNum]; ok {
+				ch <- command
+				close(ch)
+				delete(kv.channels, command.ClientId^command.SeqNum)
+			}
+			kv.mu.Unlock()
 		}
-		log.Printf("runServer")
 	}
-}
-func (kv *KVServer) resetChannels() {
-	kv.getCh = make(chan bool)
-	kv.putCh = make(chan bool)
-	kv.appendCh = make(chan bool)
 }
