@@ -291,7 +291,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			rf.commitIndex = args.LeaderCommit
 		}
-		go rf.commitLogEntries()
+		//go rf.commitLogEntries()
 	}
 	return
 
@@ -309,7 +309,7 @@ func (rf *Raft) updateLeaderCommitIndex() {
 		}
 		if count > len(rf.peers)/2 {
 			rf.commitIndex = n
-			go rf.commitLogEntries()
+			//go rf.commitLogEntries()
 			break
 		}
 	}
@@ -393,9 +393,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	//index := -1
 	//term := -1
 	//isLeader := true
+	//log.Printf("enter raft start %s", command)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	//log.Printf("leave raft start")
 	if rf.state != Leader {
+		//log.Printf("leave raft start %s", command)
 		return -1, rf.currentTerm, false
 	} else {
 		currentTerm := rf.currentTerm
@@ -405,6 +408,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		rf.logs = append(rf.logs, entry)
 		rf.persist()
+		//log.Printf("leave raft start %s", command)
+		rf.broadcastAppendEntries()
 		return len(rf.logs) - 1, currentTerm, true
 	}
 }
@@ -431,6 +436,13 @@ func (rf *Raft) commitLogEntries() {
 			Command:      rf.logs[rf.lastApplied].Command,
 			CommandIndex: rf.lastApplied,
 		}
+	}
+}
+
+func (rf *Raft) runCommitLogEntries() {
+	for !rf.killed() {
+		rf.commitLogEntries()
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -468,7 +480,7 @@ func (rf *Raft) convertToLeader() {
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.resetIndex()
-
+	//log.Printf("s%d is elected as leader", rf.me)
 	rf.broadcastAppendEntries()
 }
 
@@ -619,12 +631,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start the background server loop
 	go rf.runServer()
-
+	go rf.runCommitLogEntries()
 	return rf
 }
 
 func (rf *Raft) runServer() {
 	for !rf.killed() {
+		//log.Printf("raft running")
 		rf.mu.Lock()
 		state := rf.state
 		rf.mu.Unlock()

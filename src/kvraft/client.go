@@ -67,12 +67,11 @@ func (ck *Clerk) Get(key string) string {
 		}
 		response := ck.servers[serverId].Call("KVServer.Get", &args, &reply)
 		if response && reply.Err != ErrWrongLeader {
-			//log.Printf("known server %d", serverId)
 			ck.prevLeader = serverId
 			ck.nextSeqNum()
 			return reply.Value
 		} else {
-			//log.Printf("unknown server %d", serverId)
+			//log.Printf("s%d is wrong leader from c%d\n", serverId, ck.clientId)
 			ck.prevLeader = -1
 		}
 		time.Sleep(10 * time.Nanosecond)
@@ -115,6 +114,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ck.prevLeader = serverId
 			return
 		} else {
+			//log.Printf("s%d is wrong leader from c%d\n", serverId, ck.clientId)
 			ck.prevLeader = -1
 		}
 		time.Sleep(10 * time.Nanosecond)

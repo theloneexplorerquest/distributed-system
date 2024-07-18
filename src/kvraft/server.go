@@ -7,6 +7,7 @@ import (
 	_ "net/http/pprof"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 //const Debug = false
@@ -30,6 +31,7 @@ type Op struct {
 	Value     string
 	ClientId  int64
 	SeqNum    int64
+	Term      int
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
@@ -46,6 +48,7 @@ type KVServer struct {
 	dead        int32 // set by Kill()
 	channels    map[int64]chan Op
 	prevRequest map[int64]map[int64]struct{}
+	term        int
 
 	maxraftstate int // snapshot if log grows this big
 
@@ -56,27 +59,49 @@ type KVServer struct {
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	operation := Op{Operation: GET, Key: args.Key, ClientId: args.ClientId, SeqNum: args.SeqNum}
 	_, _, isLeader := kv.rf.Start(operation)
+	//log.Printf("server get%s from s%d", args.Key, kv.me)
+	//kv.mu.Lock()
+	//if kv.term > 0 && term != kv.term {
+	//	//log.Printf("wrong leader s%d", kv.me)
+	//	reply.Err = ErrWrongLeader
+	//	kv.mu.Unlock()
+	//	return
+	//}
+	//kv.term = term
+	//kv.mu.Unlock()
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
-
 	opChan := make(chan Op, 1)
 	kv.mu.Lock()
 	kv.channels[args.ClientId^args.SeqNum] = opChan
 	kv.mu.Unlock()
 
-	select {
-	case result := <-opChan:
-		kv.mu.Lock()
-		delete(kv.channels, args.ClientId^args.SeqNum)
-		if result.Operation == GET {
-			reply.Value = kv.m[args.Key]
-			reply.Err = OK
-		} else {
-			reply.Err = ErrWrongLeader
+	for {
+		select {
+		case result := <-opChan:
+			kv.mu.Lock()
+			delete(kv.channels, args.ClientId^args.SeqNum)
+			if result.Operation == GET {
+				reply.Value = kv.m[args.Key]
+				reply.Err = OK
+			} else {
+				reply.Err = ErrWrongLeader
+			}
+			kv.mu.Unlock()
+			return
+		default:
+			_, stillLeader := kv.rf.GetState()
+			if !stillLeader {
+				reply.Err = ErrWrongLeader
+				kv.mu.Lock()
+				delete(kv.channels, args.ClientId^args.SeqNum)
+				kv.mu.Unlock()
+				return
+			}
+			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
-		kv.mu.Unlock()
 	}
 }
 
@@ -94,25 +119,39 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-
+	//log.Printf("s%d put %s:%s from c%d seq%d idx%d ", kv.me, args.Key, args.Value, args.ClientId, args.SeqNum, index)
 	opChan := make(chan Op, 1)
 	kv.mu.Lock()
 	kv.channels[args.ClientId^args.SeqNum] = opChan
 	kv.mu.Unlock()
-
-	select {
-	case <-opChan:
-		kv.mu.Lock()
-		delete(kv.channels, args.ClientId^args.SeqNum)
-		if _, exists := kv.prevRequest[args.ClientId]; !exists {
-			// If not, create a new set
-			kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+	for {
+		select {
+		case <-opChan:
+			kv.mu.Lock()
+			//log.Printf("s%d return %s:%s for c%d seq%d", kv.me, args.Key, args.Value, args.ClientId, args.SeqNum)
+			delete(kv.channels, args.ClientId^args.SeqNum)
+			if _, exists := kv.prevRequest[args.ClientId]; !exists {
+				// If not, create a new set
+				kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+			}
+			// Add the element to the set
+			kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+			kv.mu.Unlock()
+			return
+		default:
+			// Continuously check if the leadership is still valid
+			_, stillLeader := kv.rf.GetState()
+			if !stillLeader {
+				reply.Err = ErrWrongLeader
+				kv.mu.Lock()
+				delete(kv.channels, args.ClientId^args.SeqNum)
+				kv.mu.Unlock()
+				return
+			}
+			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
-
-		// Add the element to the set
-		kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
-		kv.mu.Unlock()
 	}
+
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
@@ -135,19 +174,31 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	kv.channels[args.ClientId^args.SeqNum] = opChan
 	kv.mu.Unlock()
+	for {
+		select {
+		case <-opChan:
+			kv.mu.Lock()
+			delete(kv.channels, args.ClientId^args.SeqNum)
+			if _, exists := kv.prevRequest[args.ClientId]; !exists {
+				// If not, create a new set
+				kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+			}
 
-	select {
-	case <-opChan:
-		kv.mu.Lock()
-		delete(kv.channels, args.ClientId^args.SeqNum)
-		if _, exists := kv.prevRequest[args.ClientId]; !exists {
-			// If not, create a new set
-			kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+			// Add the element to the set
+			kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+			kv.mu.Unlock()
+			return
+		default:
+			_, stillLeader := kv.rf.GetState()
+			if !stillLeader {
+				reply.Err = ErrWrongLeader
+				kv.mu.Lock()
+				delete(kv.channels, args.ClientId^args.SeqNum)
+				kv.mu.Unlock()
+				return
+			}
+			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
-
-		// Add the element to the set
-		kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
-		kv.mu.Unlock()
 	}
 }
 
@@ -201,6 +252,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.m = make(map[string]string)
 	kv.channels = make(map[int64]chan Op)
 	kv.prevRequest = make(map[int64]map[int64]struct{})
+	kv.term = -1
 	//log.Printf("get applyCh: %v\n", kv.applyCh)
 	// You may need initialization code here.
 	go kv.runKVServer()
@@ -218,6 +270,7 @@ func (kv *KVServer) runKVServer() {
 			kv.mu.Lock()
 			switch command.Operation {
 			case PUT:
+				//log.Printf("s%d emit %s:%s for c%d seq%d idx%d", kv.me, command.Key, command.Value, command.ClientId, command.SeqNum, applyMsg.CommandIndex)
 				kv.m[command.Key] = command.Value
 			case APPEND:
 				kv.m[command.Key] += command.Value
