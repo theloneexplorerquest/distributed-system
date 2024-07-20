@@ -1,6 +1,11 @@
 package kvraft
 
-import "6.5840/porcupine"
+import (
+	"6.5840/porcupine"
+	"io/ioutil"
+	"log"
+	"net/http"
+)
 import "6.5840/models"
 import "testing"
 import "strconv"
@@ -10,7 +15,6 @@ import "strings"
 import "sync"
 import "sync/atomic"
 import "fmt"
-import "io/ioutil"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -196,6 +200,7 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 			}
 		}
 		cfg.partition(pa[0], pa[1])
+		//log.Printf("partition %d", pa[0], pa[1])
 		time.Sleep(electionTimeout + time.Duration(rand.Int63()%200)*time.Millisecond)
 	}
 }
@@ -432,6 +437,9 @@ func TestSpeed4A(t *testing.T) {
 }
 
 func TestConcurrent4A(t *testing.T) {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	// Test: many clients (4A) ...
 	GenericTest(t, "4A", 5, 5, false, false, false, -1, false)
 }
@@ -495,7 +503,6 @@ func TestOnePartition4A(t *testing.T) {
 
 	Put(cfg, ckp1, "1", "14", nil, -1)
 	check(cfg, t, ckp1, "1", "14")
-
 	cfg.end()
 
 	done0 := make(chan bool)

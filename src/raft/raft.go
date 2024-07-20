@@ -406,9 +406,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term:    rf.currentTerm,
 			Command: command,
 		}
+
 		rf.logs = append(rf.logs, entry)
 		rf.persist()
-		//log.Printf("leave raft start %s", command)
+		//log.Printf("s%d raft start %s", rf.me, command)
 		rf.broadcastAppendEntries()
 		return len(rf.logs) - 1, currentTerm, true
 	}

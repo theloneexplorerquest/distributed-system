@@ -2,6 +2,7 @@ package kvsrv
 
 import (
 	"6.5840/labrpc"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -53,6 +54,7 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
 	reply := GetReply{}
+
 	for {
 		response := ck.server.Call("KVServer.Get", &args, &reply)
 		if response {
@@ -84,8 +86,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	for {
 		response := false
 		if op == "Put" {
+			log.Printf("call append with %s %s", args.Key, args.Value)
 			response = ck.server.Call("KVServer.Put", &args, &reply)
 		} else {
+			log.Printf("call append with %s %s", args.Key, args.Value)
 			response = ck.server.Call("KVServer.Append", &args, &reply)
 		}
 		if response {

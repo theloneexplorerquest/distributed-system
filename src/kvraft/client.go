@@ -110,6 +110,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 		//log.Printf("timeoutPutStart %t Err %s", response, reply.Err)
 		if response && reply.Err != ErrWrongLeader {
+			//log.Printf("s%d is a leader from c%d\n for k %s,v %s ", serverId, ck.clientId, args.Key, args.Value)
 			ck.nextSeqNum()
 			ck.prevLeader = serverId
 			return

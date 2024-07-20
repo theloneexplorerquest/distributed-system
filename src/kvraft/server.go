@@ -100,7 +100,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 				kv.mu.Unlock()
 				return
 			}
-			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
+			time.Sleep(2 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
 	}
 }
@@ -130,12 +130,12 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 			kv.mu.Lock()
 			//log.Printf("s%d return %s:%s for c%d seq%d", kv.me, args.Key, args.Value, args.ClientId, args.SeqNum)
 			delete(kv.channels, args.ClientId^args.SeqNum)
-			if _, exists := kv.prevRequest[args.ClientId]; !exists {
-				// If not, create a new set
-				kv.prevRequest[args.ClientId] = make(map[int64]struct{})
-			}
-			// Add the element to the set
-			kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+			//if _, exists := kv.prevRequest[args.ClientId]; !exists {
+			//	// If not, create a new set
+			//	kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+			//}
+			//// Add the element to the set
+			//kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
 			kv.mu.Unlock()
 			return
 		default:
@@ -148,7 +148,7 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 				kv.mu.Unlock()
 				return
 			}
-			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
+			time.Sleep(2 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
 	}
 
@@ -156,7 +156,7 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
-	//log.Printf("log %s %d", args.Value, args.SeqNum)
+	//log.Printf("s%d append %s %s", kv.me, args.Key, args.Value)
 	if _, exists := kv.prevRequest[args.ClientId][args.SeqNum]; exists {
 		//log.Printf("caught in append")
 		kv.mu.Unlock()
@@ -179,13 +179,16 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 		case <-opChan:
 			kv.mu.Lock()
 			delete(kv.channels, args.ClientId^args.SeqNum)
-			if _, exists := kv.prevRequest[args.ClientId]; !exists {
-				// If not, create a new set
-				kv.prevRequest[args.ClientId] = make(map[int64]struct{})
-			}
+			//log.Printf("s%d append %s %s %d", kv.me, args.Key, args.Value, args.SeqNum)
 
-			// Add the element to the set
-			kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+			//if _, exists := kv.prevRequest[args.ClientId]; !exists {
+			//	// If not, create a new set
+			//	kv.prevRequest[args.ClientId] = make(map[int64]struct{})
+			//}
+			//
+			//// Add the element to the set
+			//kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
+			//log.Printf("s%d put c%d, seq %d k%s v%s", kv.me, args.ClientId, args.SeqNum, args.Key, args.Value)
 			kv.mu.Unlock()
 			return
 		default:
@@ -197,7 +200,7 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 				kv.mu.Unlock()
 				return
 			}
-			time.Sleep(10 * time.Millisecond) // Sleep for a short while to avoid busy waiting
+			time.Sleep(2 * time.Millisecond) // Sleep for a short while to avoid busy waiting
 		}
 	}
 }
@@ -268,11 +271,29 @@ func (kv *KVServer) runKVServer() {
 			}
 			command := applyMsg.Command.(Op)
 			kv.mu.Lock()
+			if _, exists := kv.prevRequest[command.ClientId][command.SeqNum]; exists {
+				// Duplicate request, ignore
+				//log.Printf("s%d dul %s %s", kv.me, command.Key, command.Value)
+
+				if ch, ok := kv.channels[command.ClientId^command.SeqNum]; ok {
+					ch <- command
+				}
+				kv.mu.Unlock()
+				continue
+			}
+			if _, exists := kv.prevRequest[command.ClientId]; !exists {
+				// If not, create a new set
+				kv.prevRequest[command.ClientId] = make(map[int64]struct{})
+			}
+			// Add the element to the set
+			kv.prevRequest[command.ClientId][command.SeqNum] = struct{}{}
+
 			switch command.Operation {
 			case PUT:
 				//log.Printf("s%d emit %s:%s for c%d seq%d idx%d", kv.me, command.Key, command.Value, command.ClientId, command.SeqNum, applyMsg.CommandIndex)
 				kv.m[command.Key] = command.Value
 			case APPEND:
+				//log.Printf("s%d emit %s:%s for c%d seq%d idx%d", kv.me, command.Key, command.Value, command.ClientId, command.SeqNum, applyMsg.CommandIndex)
 				kv.m[command.Key] += command.Value
 			case GET:
 				// do nothing
