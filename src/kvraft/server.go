@@ -59,16 +59,6 @@ type KVServer struct {
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	operation := Op{Operation: GET, Key: args.Key, ClientId: args.ClientId, SeqNum: args.SeqNum}
 	_, _, isLeader := kv.rf.Start(operation)
-	//log.Printf("server get%s from s%d", args.Key, kv.me)
-	//kv.mu.Lock()
-	//if kv.term > 0 && term != kv.term {
-	//	//log.Printf("wrong leader s%d", kv.me)
-	//	reply.Err = ErrWrongLeader
-	//	kv.mu.Unlock()
-	//	return
-	//}
-	//kv.term = term
-	//kv.mu.Unlock()
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -128,14 +118,7 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 		select {
 		case <-opChan:
 			kv.mu.Lock()
-			//log.Printf("s%d return %s:%s for c%d seq%d", kv.me, args.Key, args.Value, args.ClientId, args.SeqNum)
 			delete(kv.channels, args.ClientId^args.SeqNum)
-			//if _, exists := kv.prevRequest[args.ClientId]; !exists {
-			//	// If not, create a new set
-			//	kv.prevRequest[args.ClientId] = make(map[int64]struct{})
-			//}
-			//// Add the element to the set
-			//kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
 			kv.mu.Unlock()
 			return
 		default:
@@ -156,9 +139,7 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
-	//log.Printf("s%d append %s %s", kv.me, args.Key, args.Value)
 	if _, exists := kv.prevRequest[args.ClientId][args.SeqNum]; exists {
-		//log.Printf("caught in append")
 		kv.mu.Unlock()
 		return
 	}
@@ -179,16 +160,6 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 		case <-opChan:
 			kv.mu.Lock()
 			delete(kv.channels, args.ClientId^args.SeqNum)
-			//log.Printf("s%d append %s %s %d", kv.me, args.Key, args.Value, args.SeqNum)
-
-			//if _, exists := kv.prevRequest[args.ClientId]; !exists {
-			//	// If not, create a new set
-			//	kv.prevRequest[args.ClientId] = make(map[int64]struct{})
-			//}
-			//
-			//// Add the element to the set
-			//kv.prevRequest[args.ClientId][args.SeqNum] = struct{}{}
-			//log.Printf("s%d put c%d, seq %d k%s v%s", kv.me, args.ClientId, args.SeqNum, args.Key, args.Value)
 			kv.mu.Unlock()
 			return
 		default:

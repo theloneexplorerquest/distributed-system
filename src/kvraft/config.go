@@ -2,7 +2,6 @@ package kvraft
 
 import (
 	"6.5840/labrpc"
-	"log"
 )
 import "testing"
 import "os"
@@ -355,7 +354,7 @@ func (cfg *config) make_partition() ([]int, []int) {
 		}
 	}
 	p2[len(p2)-1] = l
-	log.Printf("leader is %d", l)
+	//log.Printf("leader is %d", l)
 	return p1, p2
 }
 

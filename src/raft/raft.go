@@ -441,7 +441,7 @@ func (rf *Raft) commitLogEntries() {
 }
 
 func (rf *Raft) runCommitLogEntries() {
-	for !rf.killed() {
+	for !rf.Killed() {
 		rf.commitLogEntries()
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -461,7 +461,7 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
-func (rf *Raft) killed() bool {
+func (rf *Raft) Killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
 }
@@ -637,7 +637,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) runServer() {
-	for !rf.killed() {
+	for !rf.Killed() {
 		//log.Printf("raft running")
 		rf.mu.Lock()
 		state := rf.state
