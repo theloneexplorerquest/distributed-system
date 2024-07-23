@@ -21,6 +21,7 @@ import (
 	"6.5840/labgob"
 	"bytes"
 	"fmt"
+	"log"
 	"math/rand"
 	_ "net/http/pprof"
 	"strings"
@@ -52,6 +53,12 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
+type Snapshot struct {
+	Index int
+	Term  int
+	Data  []byte
+}
+
 type state int
 
 // Declare constants using iota
@@ -81,29 +88,33 @@ type Entry struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu              sync.Mutex          // Lock to protect shared access to this peer's state
-	peers           []*labrpc.ClientEnd // RPC end points of all peers
-	persister       *Persister          // Object to hold this peer's persisted state
-	me              int                 // this peer's index into peers[]
-	dead            int32               // set by Kill()
-	currentTerm     int
-	votedFor        int
-	logs            []Entry
-	commitIndex     int
-	lastApplied     int
-	state           state
-	lastActive      time.Time
-	voteCount       int
-	electionTimeOut time.Duration
-	nextIndex       []int
-	matchIndex      []int
-	applyCh         chan ApplyMsg
-	winElectionCh   chan bool
-	currentTime     time.Time
-	winElectCh      chan bool
-	stepDownCh      chan bool
-	grantVoteCh     chan bool
-	heartbeatCh     chan bool
+	mu                sync.Mutex          // Lock to protect shared access to this peer's state
+	peers             []*labrpc.ClientEnd // RPC end points of all peers
+	persister         *Persister          // Object to hold this peer's persisted state
+	me                int                 // this peer's index into peers[]
+	dead              int32               // set by Kill()
+	currentTerm       int
+	votedFor          int
+	logs              []Entry
+	commitIndex       int
+	lastApplied       int
+	state             state
+	lastActive        time.Time
+	voteCount         int
+	electionTimeOut   time.Duration
+	nextIndex         []int
+	matchIndex        []int
+	applyCh           chan ApplyMsg
+	winElectionCh     chan bool
+	currentTime       time.Time
+	winElectCh        chan bool
+	stepDownCh        chan bool
+	grantVoteCh       chan bool
+	heartbeatCh       chan bool
+	snapshot          Snapshot
+	lastIncludedIndex int
+	lastIncludedTerm  int
+
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -183,7 +194,19 @@ func (rf *Raft) readPersist(data []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	log.Printf("index %d, log len %d", index, len(snapshot))
+	if index <= rf.lastIncludedIndex {
+		return
+	}
+	rf.logs = append(make([]Entry, 0), rf.logs[index-rf.lastIncludedIndex:]...)
+	rf.lastIncludedIndex = index
+	rf.lastIncludedTerm = rf.getLog(index).Term
+}
 
+func (rf *Raft) getLog(i int) Entry {
+	return rf.logs[i-rf.lastIncludedIndex]
 }
 
 // example RequestVote RPC arguments structure.
@@ -218,6 +241,16 @@ type AppendEntriesReply struct {
 	XIndex  int
 	XTerm   int
 	XLen    int
+}
+
+type InstallSnapshotArgs struct {
+	Term              int
+	LeaderId          int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Offset            int
+	Data              []byte
+	Done              bool
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -390,10 +423,6 @@ func (rf *Raft) LogOk(argLastLogTerm int, argLastLogIndex int) bool {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	//index := -1
-	//term := -1
-	//isLeader := true
-	//log.Printf("enter raft start %s", command)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	//log.Printf("leave raft start")
@@ -428,15 +457,22 @@ func (rf *Raft) stepDownAsFollower(term int) {
 }
 
 func (rf *Raft) commitLogEntries() {
+	var messages []ApplyMsg
+
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	for rf.commitIndex > rf.lastApplied {
 		rf.lastApplied++
-		rf.applyCh <- ApplyMsg{
+		msg := ApplyMsg{
 			CommandValid: true,
-			Command:      rf.logs[rf.lastApplied].Command,
+			Command:      rf.logs[rf.lastApplied-rf.lastIncludedIndex].Command,
 			CommandIndex: rf.lastApplied,
 		}
+		messages = append(messages, msg)
+	}
+	rf.mu.Unlock()
+
+	for _, msg := range messages {
+		rf.applyCh <- msg
 	}
 }
 
@@ -481,7 +517,6 @@ func (rf *Raft) convertToLeader() {
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.resetIndex()
-	//log.Printf("s%d is elected as leader", rf.me)
 	rf.broadcastAppendEntries()
 }
 
@@ -499,17 +534,22 @@ func (rf *Raft) broadcastAppendEntries() {
 
 	for server := range rf.peers {
 		if server != rf.me {
-			args := AppendEntriesArgs{}
-			args.Term = rf.currentTerm
-			args.LeaderId = rf.me
-			args.PrevLogIndex = rf.nextIndex[server] - 1
-			args.PrevLogTerm = rf.logs[args.PrevLogIndex].Term
-			args.LeaderCommit = rf.commitIndex
-			entries := rf.logs[rf.nextIndex[server]:]
-			args.Entries = make([]Entry, len(entries))
-			// make a deep copy of the entries to send
-			copy(args.Entries, entries)
-			go rf.sendAppendEntries(server, &args, &AppendEntriesReply{})
+			if false {
+				//args := InstallSnapshotArgs{}
+
+			} else {
+				args := AppendEntriesArgs{}
+				args.Term = rf.currentTerm
+				args.LeaderId = rf.me
+				args.PrevLogIndex = rf.nextIndex[server] - 1
+				args.PrevLogTerm = rf.logs[args.PrevLogIndex].Term
+				args.LeaderCommit = rf.commitIndex
+				entries := rf.logs[rf.nextIndex[server]:]
+				args.Entries = make([]Entry, len(entries))
+				// make a deep copy of the entries to send
+				copy(args.Entries, entries)
+				go rf.sendAppendEntries(server, &args, &AppendEntriesReply{})
+			}
 		}
 	}
 }
@@ -625,6 +665,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.stepDownCh = make(chan bool)
 	rf.grantVoteCh = make(chan bool)
 	rf.heartbeatCh = make(chan bool)
+	//rf.snapshot = nil
 	rf.logs = append(rf.logs, Entry{Term: 0})
 
 	// initialize from state persisted before a crash
